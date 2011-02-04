@@ -1,10 +1,12 @@
 {spawn} = require 'child_process'
 {EventEmitter} = require 'events'
-{PdfImageExtractor} = require 'pdfimageextractor'
+{PdfImageExtractor} = require './pdfimageextractor'
+{Accumulator} = require './accumulator'	
 fs = require 'fs'
+path = require 'path'
 temp = require 'temp'
 
-Tesseract = class Tesseract
+class Tesseract extends EventEmitter
 	constructor () ->
 	convert: (filename) ->
 		#tesseract ${t}.tif ${x}
@@ -13,9 +15,9 @@ Tesseract = class Tesseract
 			fs.readFile filename + ".txt", (err, data) =>
 				if err
 					throw err;
-				@emit "done" data
+				@emit "done", data
 
-OcrImagePrepConverter = class OcrImagePrepConverter extends EventEmitter
+class OcrImagePrepConverter extends EventEmitter
 	constructor () ->
 	convert: (filename) ->
 		#convert -quiet  filename filename.tif
@@ -24,13 +26,13 @@ OcrImagePrepConverter = class OcrImagePrepConverter extends EventEmitter
 			@emit "done", filename + ".tif"
 			
 			
-exports.Recogizer = class Recognizer extends EventEmitter 
+exports.Recognizer = class Recognizer extends EventEmitter 
 	constructor: (@filename) ->		
 		@converter = new OcrImagePrepConverter()
 		@tesseract = new Tesseract()		
 		@text = new Accumulator()
 				
-		@tesseract.on "done" (data) =>
+		@tesseract.on "done", (data) =>
 			@text.accumulate data
 			
 	recognize: ->
@@ -39,10 +41,10 @@ exports.Recogizer = class Recognizer extends EventEmitter
 
             # copy original file to temp dir
             @sourcePdf = path.join dirPath, 'source.pdf'
-            fullOriginalFilePath = fs.realpathSync @originalFile 
+            fullOriginalFilePath = fs.realpathSync @filename
             fs.writeFile @sourcePdf, fullOriginalFilePath, (err) =>   
-	            imageExtractor = new PdfImageExtractor()	         	
-				imageExtractor.on "done" () =>
+				imageExtractor = new PdfImageExtractor()	         	
+				imageExtractor.on "done", () =>
 					fs.readdir dirpath, (err, files) =>	
 						executeOcrOnImages file for file in files						
 					@emit "done", @text.value					
