@@ -5,6 +5,7 @@
 fs = require 'fs'
 path = require 'path'
 temp = require 'temp'
+util = require 'util'
 
 class Tesseract extends EventEmitter
 	constructor () ->
@@ -13,21 +14,21 @@ class Tesseract extends EventEmitter
 		proc = spawn "tesseract", [filename, filename]
 		proc.on "exit", () =>			
 			fs.readFile filename + ".txt", (err, data) =>
-				if err
-					throw err;
+				console.log "tesseract data for " + filename + " : " + data
 				@emit "done", data
 
 class OcrImagePrepConverter extends EventEmitter
 	constructor () ->
-	convert: (filename) ->
+	convert: (filename, callback) ->
 		#convert -quiet  filename filename.tif
 		proc = spawn "convert", ["-quiet", filename, filename + ".tif"]
 		proc.on "exit", () =>
-			@emit "done", filename + ".tif"
+			callback filename + ".tif"
 			
 			
 exports.Recognizer = class Recognizer extends EventEmitter 
 	constructor: (@filename) ->		
+		console.log "recognizer spinning up for " + @filename
 		@converter = new OcrImagePrepConverter()
 		@tesseract = new Tesseract()		
 		@text = new Accumulator()
@@ -36,23 +37,26 @@ exports.Recognizer = class Recognizer extends EventEmitter
 			@text.accumulate data
 			
 	recognize: ->
-		temp.mkdir "mimeograph_" + @filename, (err, dirPath) =>
-            process.chdir(dirPath);
-
+		temp.mkdir "mimeograph_", (err, dirPath) =>
+			console.log "temp dir path " + dirPath
+			process.chdir dirPath
             # copy original file to temp dir
-            @sourcePdf = path.join dirPath, 'source.pdf'
-            fullOriginalFilePath = fs.realpathSync @filename
-            fs.writeFile @sourcePdf, fullOriginalFilePath, (err) =>   
+			@sourcePdf = path.join dirPath, 'source.pdf'
+			ins = fs.createReadStream @filename
+			outs = fs.createWriteStream @sourcePdf
+			util.pump ins, outs, () =>
 				imageExtractor = new PdfImageExtractor()	         	
 				imageExtractor.on "done", () =>
-					fs.readdir dirpath, (err, files) =>	
-						executeOcrOnImages file for file in files						
-					@emit "done", @text.value					
-				imageExtractor.extract(@sourcePdf)
+					files = fs.readdirSync dirPath
+					@executeOcrOnImages file for file in files						
+				imageExtractor.extract(@sourcePdf)	
 	executeOcrOnImages: (candidate) ->
+		console.log "candidate file: " + candidate
 		if /jpg$/.test candidate
-			@converter.convert(imageFile)
-			@converter.on "done", (tiffFile) =>
-				@tesseract.convert(tiffFile)				
+			@converter.convert candidate, (tiffFile) =>
+				console.log "tesseracting " + tiffFile
+				@tesseract.convert tiffFile
+		
+			
 												
 			
