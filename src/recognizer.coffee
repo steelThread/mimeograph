@@ -1,11 +1,19 @@
 {spawn} = require 'child_process'
 {EventEmitter} = require 'events'
-{PdfImageExtractor} = require './pdfimageextractor'
 {Accumulator} = require './accumulator'	
 fs = require 'fs'
 path = require 'path'
 temp = require 'temp'
 util = require 'util'
+
+class PdfImageExtractor extends EventEmitter
+	constructor: ->
+	extract: (filename) ->
+		# gs -SDEVICE=jpeg -r300x300 -sPAPERSIZE=letter -sOutputFile=pdf_%04d.jpg -dNOPAUSE -- filename
+		console.log "extracting: " + filename
+		proc = spawn "gs" , ["-SDEVICE=jpeg", "-r300x300", "-sPAPERSIZE=letter", "-sOutputFile="+filename+"_%04d.jpg" , "-dNOPAUSE", "--", filename]
+		proc.stdout.on "end", () =>
+			@emit "done"
 
 class Tesseract extends EventEmitter
 	constructor () ->
@@ -14,7 +22,7 @@ class Tesseract extends EventEmitter
 		proc = spawn "tesseract", [filename, filename]
 		proc.on "exit", () =>			
 			fs.readFile filename + ".txt", (err, data) =>
-				console.log "tesseract data for " + filename + " : " + data
+				#console.log "tesseract data for " + filename + " : " + data
 				@emit "done", data
 
 class OcrImagePrepConverter extends EventEmitter
@@ -51,10 +59,10 @@ exports.Recognizer = class Recognizer extends EventEmitter
 					@executeOcrOnImages file for file in files						
 				imageExtractor.extract(@sourcePdf)	
 	executeOcrOnImages: (candidate) ->
-		console.log "candidate file: " + candidate
+		#console.log "candidate file: " + candidate
 		if /jpg$/.test candidate
 			@converter.convert candidate, (tiffFile) =>
-				console.log "tesseracting " + tiffFile
+				#console.log "tesseracting " + tiffFile
 				@tesseract.convert tiffFile
 		
 			

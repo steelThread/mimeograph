@@ -1,6 +1,15 @@
-{PdfTextExtractor} = require './pdftextextractor'
 {Accumulator} = require './accumulator'	
 {EventEmitter} = require 'events'
+
+class PdfTextExtractor extends EventEmitter
+	constructor: ->
+	extract: (filename) ->			
+		proc = spawn "pdftotext" , [filename, "-"]
+		proc.stdout.on "data", (data) =>
+			@emit "text", data.toString()
+		proc.stdout.on "end", () =>
+			@emit "done"
+
 
 exports.Extractor = class Extractor extends EventEmitter
 	constructor: (@filename) ->
