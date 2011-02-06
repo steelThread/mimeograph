@@ -1,5 +1,6 @@
 {Accumulator} = require './accumulator'	
 {EventEmitter} = require 'events'
+{spawn} = require 'child_process'
 
 class PdfTextExtractor extends EventEmitter
 	constructor: ->

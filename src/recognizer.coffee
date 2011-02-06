@@ -5,6 +5,7 @@ fs = require 'fs'
 path = require 'path'
 temp = require 'temp'
 util = require 'util'
+resque = require 'coffee-resque'
 
 class PdfImageExtractor extends EventEmitter
 	constructor: ->
@@ -15,35 +16,51 @@ class PdfImageExtractor extends EventEmitter
 		proc.stdout.on "end", () =>
 			@emit "done"
 
-class Tesseract extends EventEmitter
-	constructor () ->
-	convert: (filename) ->
+class Tesseract 
+	constructor (@filename, @callback) ->
+	recognize: () ->
 		#tesseract ${t}.tif ${x}
-		proc = spawn "tesseract", [filename, filename]
+		proc = spawn "tesseract", [@filename, @filename]
 		proc.on "exit", () =>			
 			fs.readFile filename + ".txt", (err, data) =>
-				#console.log "tesseract data for " + filename + " : " + data
-				@emit "done", data
+				console.log "tesseract data for " + filename + " : " + data
+				callback data
+				
 
 class OcrImagePrepConverter extends EventEmitter
-	constructor () ->
-	convert: (filename, callback) ->
+	constructor (@filename, @callback) ->
+	convert: () ->
 		#convert -quiet  filename filename.tif
-		proc = spawn "convert", ["-quiet", filename, filename + ".tif"]
+		proc = spawn "convert", ["-quiet", @filename, @filename + ".tif"]
 		proc.on "exit", () =>
-			callback filename + ".tif"
-			
+			callback @filename + ".tif"			
 			
 exports.Recognizer = class Recognizer extends EventEmitter 
-	constructor: (@filename) ->		
+	constructor: (@filename) ->
 		console.log "recognizer spinning up for " + @filename
-		@converter = new OcrImagePrepConverter()
-		@tesseract = new Tesseract()		
+		@conn = resque.connect namespace: 'mimeograph'
+		@redis = @conn.redis
+		@worker = @conn.worker 'recognize', 
+		  convert: (filename, callback) -> new OcrImagePrepConverter(filename, callback).convert()
+		  tesseract: (filename, callback)  -> new Tesseract(filename, callback).recognize()
+		@worker.on 'error',   _.bind @error, @
+		@worker.on 'success', _.bind @success, @
 		@text = new Accumulator()
-				
-		@tesseract.on "done", (data) =>
-			@text.accumulate data
-			
+
+	queue: (job, work) -> 
+		@conn.enqueue 'recognize', job, [work]
+
+	success: (worker, queue, job, result) -> 
+		if job.class is 'recognize'
+			@text.accumulate result
+		else if job.class is 'convert'
+			@queue 'tesseract', result
+			@redis.incr @conn.key('processing:page'), (err, pg) => @work()
+
+	error: (error, worker, queue, job) -> 
+		console.log "Error processing job #{JSON.stringify job}.  #{JSON.stringify error}"
+
+							
 	recognize: ->
 		temp.mkdir "mimeograph_", (err, dirPath) =>
 			console.log "temp dir path " + dirPath
