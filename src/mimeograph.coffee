@@ -3,6 +3,8 @@ resque         = require 'coffee-resque'
 {RedisFS}      = require './redisfs'
 temp           = require 'temp'
 _              = require 'underscore'
+{Accumulator}  = require './accumulator'	
+{spawn}        = require 'child_process'
 
 
 _.isObject = (val) -> '[object Object]' is toString.apply val
@@ -10,12 +12,17 @@ _.isObject = (val) -> '[object Object]' is toString.apply val
 class Extractor
 	constructor: (@id, @callback) ->
 		@redisfs = new RedisFS()
+		@text = new Accumulator()
 	extract: () ->
 		console.log "mimeograph (Extractor): extract " + @id
 		@redisfs.readFileToTemp @id, (file) =>
 			console.log "mimeograph (Extractor): extract file " + file
 			@redisfs.end()
-			@callback "intentional", "foo"
+			proc = spawn "pdftotext" , [file, "-"]
+			proc.stdout.on "data", (data) =>
+				@text.accumulate data
+			proc.stdout.on "end", () =>
+				@callback null, @text.value
 		
 class Splitter
 	constructor: (@filename) ->
