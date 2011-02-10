@@ -22,7 +22,7 @@ class Extractor
 			proc.stdout.on "data", (data) =>
 				@text.accumulate data
 			proc.stdout.on "end", () =>
-				@callback null, @text.value
+				@callback null, @text.value.trim()
 		
 class Splitter
 	constructor: (@filename) ->
