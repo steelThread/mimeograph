@@ -22,13 +22,21 @@ class Extractor
 			proc.stdout.on "data", (data) =>
 				@text.accumulate data
 			proc.stdout.on "end", () =>
-				@callback null, @text.value.trim()
+				@callback null, @text.value.toString().trim()
 		
 class Splitter
-	constructor: (@filename) ->
-	split: (callback) ->
-		console.log "mimeograph (Splitter): split " + @filename
-		callback null, ["foo.jpg", "bar.jpg", "baz.jgp"]
+	constructor: (@id, @callback) ->
+		@redisfs = new RedisFS()
+	split: () ->
+		console.log "mimeograph (Splitter): split " + @id
+		@redisfs.readFileToTemp @id, (file) =>
+			# gs -SDEVICE=jpeg -r300x300 -sPAPERSIZE=letter -sOutputFile=pdf_%04d.jpg -dNOPAUSE -- filename
+			console.log "mimeograph (Splitter): splitting file: " + file
+			proc = spawn "gs" , ["-SDEVICE=jpeg", "-r300x300", "-sPAPERSIZE=letter", "-sOutputFile="+file+"_%04d.jpg" , "-dNOPAUSE", "--", file]
+			proc.stdout.on "end", () =>
+				console.log "mimeograph (Splitter): done."
+				@redisfs.end()			
+				@callback null, ["foo.jpg", "bar.jpg", "baz.jgp"]
 		
 class Converter 
 	constructor: (@filename) ->
@@ -48,7 +56,7 @@ exports.Mimeograph = class Mimeograph extends EventEmitter
 		@conn = resque.connect namespace: 'mimeograph'
 		@worker = @conn.worker 'mimeograph', 			
 		  extract: (filename, callback) -> new Extractor(filename, callback).extract()
-		  #split: (filename, callback) -> new Splitter(filename, callback).split()
+		  split: (filename, callback) -> new Splitter(filename, callback).split()
 		  #convert: (filename, callback) -> new Converter(filename).convert(callback)
 		  #recognize: (filename, callback)  -> new Recgonizer(filename).recognize(callback)
 		@worker.on 'error',   _.bind @error, @
