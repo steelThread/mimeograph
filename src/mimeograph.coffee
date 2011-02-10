@@ -80,7 +80,7 @@ exports.Mimeograph = class Mimeograph extends EventEmitter
 				@emit 'done', result
 				@end()
 		else if job.class is 'split'
-			@store filename, queueconvert for filename in result
+			@store filename, @queueConvert for filename in result
 		else if job.class is 'convert'
 			@store result, (uuid, reply) =>
 				@conn.enqueue 'mimeograph', 'recognize', [uuid]
