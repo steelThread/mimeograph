@@ -1,39 +1,51 @@
 redis = require 'redis'
-fs = require 'fs'
-UUID = require 'uuid'
+fs    = require 'fs'
+UUID  = require 'node-uuid'
+temp  = require 'temp'
 			
 exports.RedisFS = class RedisFS 
 	constructor: ->
 		@client = redis.createClient()
 		@client.on "error", (err) ->
-    		console.log "Error " + err
-    write: (data, callback) ->
+    		console.log "RedisFS: Error " + err
+    		
+	write: (data, callback) ->
 		uuid = UUID()
-		@client.set uuid, data, (err, reply) ->
+		console.log "RedisFS: write " + uuid
+		@client.set uuid, data, (err, reply) =>
 			if err?
-				console.log "write error: " + err
+				console.log "RedisFS: write error: " + err
 			else
 				callback uuid, reply
-    
+   
 	writeFile: (filename, callback) ->
-		fs.readFile filename, encoding='base64', (err, data) ->
-			write data, callback
+		console.log "RedisFS: writeFile " + filename
+		fs.readFile filename, encoding='base64', (err, data) =>
+			@write data, callback
 			
 	read: (uuid, callback) ->
-		client.get uuid, (err, reply) ->
+		console.log "RedisFS: read " + uuid
+		@client.get uuid, (err, reply) =>
 			if err?
-				console.log "read error: " + err
+				console.log "RedisFS: read error: " + err
 			else
 				callback reply
 				
 	readFile: (uuid, outfile, callback) ->
-		read uuid, (reply) ->
-			fs.writeFile outfile, reply, encoding='base64', (err) ->
+		console.log "RedisFS: readFile " + uuid + " , " + outfile
+		@read uuid, (reply) =>
+			fs.writeFile outfile, reply, encoding='base64', (err) =>
 				if err?
-					console.log "fs write error: " + err
+					console.log "RedisFS: fs write error: " + err
 				else
-					console.log outfile + " written"
-					callback()
+					console.log "RedisFS: " + outfile + " written"
+					callback outfile
+					
+	readFileToTemp: (uuid, callback) =>
+		console.log "RedisFS: readFileToTemp " + uuid 
+		temp.open 'mimeograph', (err, file) =>
+			console.log "RedisFS: temp file " + file.path
+			@readFile uuid, file.path, callback
 					
 	end: () ->
 		@client.end()
