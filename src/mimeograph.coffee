@@ -11,49 +11,50 @@ class Extractor
 	constructor: (@id, @callback) ->
 		@redisfs = new RedisFS()
 	extract: () ->
-		console.log "extract " + @id
+		console.log "mimeograph (Extractor): extract " + @id
 		@redisfs.readFileToTemp @id, (file) =>
-			console.log "extract file " + file
+			console.log "mimeograph (Extractor): extract file " + file
+			@redisfs.end()
 			@callback "intentional", "foo"
 		
 class Splitter
 	constructor: (@filename) ->
 	split: (callback) ->
-		console.log "split " + @filename
+		console.log "mimeograph (Splitter): split " + @filename
 		callback null, ["foo.jpg", "bar.jpg", "baz.jgp"]
 		
 class Converter 
 	constructor: (@filename) ->
 	convert: (callback) ->
-		console.log "convert " + @filename	
+		console.log "mimeograph (Converter): convert " + @filename	
 		callback null, "foo.tif"
 	
 class Recognizer
 	constructor: (@filename) ->
 	recognize: (callback) ->
-		console.log "recognize " + @filename
+		console.log "mimeograph (Recognizer): recognize " + @filename
 		callback null, "foo"
 
 exports.Mimeograph = class Mimeograph extends EventEmitter
 	constructor: () ->
-		console.log "spinning up mimeograph"
+		console.log "mimeograph: spinning up mimeograph"
 		@conn = resque.connect namespace: 'mimeograph'
 		@worker = @conn.worker 'mimeograph', 			
 		  extract: (filename, callback) -> new Extractor(filename, callback).extract()
+		  #split: (filename, callback) -> new Splitter(filename, callback).split()
 		  #convert: (filename, callback) -> new Converter(filename).convert(callback)
-		  #split: (filename, callback) -> new Splitter(filename).split(callback)
 		  #recognize: (filename, callback)  -> new Recgonizer(filename).recognize(callback)
 		@worker.on 'error',   _.bind @error, @
 		@worker.on 'success', _.bind @success, @
 		@redisfs = new RedisFS()
 		@worker.start()
-		console.log "done spinning up mimeograph"
+		console.log "mimeograph: done spinning up mimeograph"
 		
 	execute: (@originalFile) ->
-		console.log "execute " + @originalFile
+		console.log "mimeograph: execute " + @originalFile
 		@redisfs.writeFile @originalFile, (uuid, reply) =>
 			@id = uuid			
-			console.log "recieved " + @id
+			console.log "mimeograph: recieved " + @id
 			@conn.enqueue 'mimeograph', 'extract', [@id]
 
 	success: (worker, queue, job, result) -> 
@@ -78,7 +79,7 @@ exports.Mimeograph = class Mimeograph extends EventEmitter
 		@redisfs.writeFile filename, callback
 
 	error: (error, worker, queue, job) -> 
-		console.log "Error processing job #{JSON.stringify job}.  #{JSON.stringify error}"
+		console.log "mimeograph: Error processing job #{JSON.stringify job}.  #{JSON.stringify error}"
 		@end()
 		
 	end: () ->
