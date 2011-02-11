@@ -5,6 +5,7 @@ temp           = require 'temp'
 _              = require 'underscore'
 {Accumulator}  = require './accumulator'	
 {spawn}        = require 'child_process'
+fs             = require 'fs'
 
 
 _.isObject = (val) -> '[object Object]' is toString.apply val
@@ -36,19 +37,32 @@ class Splitter
 			proc.stdout.on "end", () =>
 				console.log "mimeograph (Splitter): done."
 				@redisfs.end()			
-				@callback null, ["foo.jpg", "bar.jpg", "baz.jgp"]
+				fs.readdir "/tmp", (err, files) =>
+					@isSplitImage file, "/tmp/" + candidate for candidate in files
+					
+	isSplitImage: (basename, filename) ->
+		#console.log "mimeograph (Splitter): seeking basename " + basename + " in " + filename
+		if filename.toString().match("^" + basename + "?.*jpg?$")
+			console.log "mimeograph (Splitter): found matching file: " + filename
+			@callback null, filename.toString().trim()
 		
 class Converter 
-	constructor: (@filename) ->
-	convert: (callback) ->
+	constructor: (@filename, @callback) ->
+	convert: () ->
 		console.log "mimeograph (Converter): convert " + @filename	
-		callback null, "foo.tif"
+		proc = spawn "convert", ["-quiet", @filename, @filename + ".tif"]
+		proc.on "exit", () =>
+			@callback null, @filename + ".tif"	
 	
 class Recognizer
-	constructor: (@filename) ->
-	recognize: (callback) ->
+	constructor: (@filename, @callback) ->
+	recognize: () ->
 		console.log "mimeograph (Recognizer): recognize " + @filename
-		callback null, "foo"
+		proc = spawn "tesseract", [@filename, @filename]
+		proc.on "exit", () =>			
+			fs.readFile @filename + ".txt", (err, data) =>
+				console.log "tesseract data for " + filename + " : " + data
+				@callback null, data
 
 exports.Mimeograph = class Mimeograph extends EventEmitter
 	constructor: () ->
@@ -57,8 +71,8 @@ exports.Mimeograph = class Mimeograph extends EventEmitter
 		@worker = @conn.worker 'mimeograph', 			
 		  extract: (filename, callback) -> new Extractor(filename, callback).extract()
 		  split: (filename, callback) -> new Splitter(filename, callback).split()
-		  #convert: (filename, callback) -> new Converter(filename).convert(callback)
-		  #recognize: (filename, callback)  -> new Recgonizer(filename).recognize(callback)
+		  convert: (filename, callback) -> new Converter(filename, callback).convert()
+		  recognize: (filename, callback)  -> new Recognizer(filename, callback).recognize()
 		@worker.on 'error',   _.bind @error, @
 		@worker.on 'success', _.bind @success, @
 		@redisfs = new RedisFS()
@@ -80,7 +94,7 @@ exports.Mimeograph = class Mimeograph extends EventEmitter
 				@emit 'done', result
 				@end()
 		else if job.class is 'split'
-			@store filename, @queueConvert for filename in result
+			@store result, @queueConvert 
 		else if job.class is 'convert'
 			@store result, (uuid, reply) =>
 				@conn.enqueue 'mimeograph', 'recognize', [uuid]
