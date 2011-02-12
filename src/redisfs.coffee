@@ -46,6 +46,12 @@ exports.RedisFS = class RedisFS
 		temp.open 'mimeograph', (err, file) =>
 			console.log "RedisFS: temp file " + file.path
 			@readFile uuid, file.path, callback
+
+	readFileToTempWithHints: (prefix, suffix, uuid, callback) =>	
+		console.log "RedisFS: readFileToTemp " + uuid 
+		temp.open {'prefix':prefix, 'suffix':suffix}, (err, file) =>
+			console.log "RedisFS: temp file " + file.path
+			@readFile uuid, file.path, callback
 					
 	end: () ->
 		@client.end()

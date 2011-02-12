@@ -47,22 +47,29 @@ class Splitter
 			@callback null, filename.toString().trim()
 		
 class Converter 
-	constructor: (@filename, @callback) ->
+	constructor: (@id, @callback) ->
+		@redisfs = new RedisFS()
 	convert: () ->
-		console.log "mimeograph (Converter): convert " + @filename	
-		proc = spawn "convert", ["-quiet", @filename, @filename + ".tif"]
-		proc.on "exit", () =>
-			@callback null, @filename + ".tif"	
+		console.log "mimeograph (Converter): convert " + @id	
+		@redisfs.readFileToTemp @id, (file) =>
+			proc = spawn "convert", ["-quiet", file, file + ".tif"]
+			proc.on "exit", () =>
+				@callback null, file + ".tif"	
+			@redisfs.end()
 	
 class Recognizer
-	constructor: (@filename, @callback) ->
+	constructor: (@id, @callback) ->
+		@redisfs = new RedisFS()
 	recognize: () ->
-		console.log "mimeograph (Recognizer): recognize " + @filename
-		proc = spawn "tesseract", [@filename, @filename]
-		proc.on "exit", () =>			
-			fs.readFile @filename + ".txt", (err, data) =>
-				console.log "tesseract data for " + filename + " : " + data
-				@callback null, data
+		console.log "mimeograph (Recognizer): recognize " + @id
+		@redisfs.readFileToTempWithHints "mimeograph", ".tif", @id, (file) =>
+			fs.mov
+			proc = spawn "tesseract", [file, file]
+			proc.on "exit", () =>			
+				fs.readFile file + ".txt", (err, data) =>
+					console.log "tesseract data for " + file + " : " + data
+					@callback null, data
+			@redisfs.end()
 
 exports.Mimeograph = class Mimeograph extends EventEmitter
 	constructor: () ->
@@ -89,20 +96,22 @@ exports.Mimeograph = class Mimeograph extends EventEmitter
 	success: (worker, queue, job, result) -> 
 		if job.class is 'extract'		
 			if _.isEmpty result  
-				@conn.enqueue 'mimeograph', 'split', [@id]
+				@queue 'split', @id
 			else 
 				@emit 'done', result
 				@end()
 		else if job.class is 'split'
-			@store result, @queueConvert 
-		else if job.class is 'convert'
 			@store result, (uuid, reply) =>
-				@conn.enqueue 'mimeograph', 'recognize', [uuid]
+				@queue 'convert', uuid
+		else if job.class is 'convert'
+			@store result, (uuid, reply) =>				
+				@queue 'recognize', uuid
 		else if job.class is 'recognize'
-			@emit 'done', result
+			console.log "mimeograph: done, recognized " + result.length + " chars"
+			#@emit 'done', result
 
-	queueConvert: (uuid, reply) =>
-		@conn.enqueue 'mimeograph', 'convert', [uuid]
+	queue: (job, uuid) =>
+		@conn.enqueue 'mimeograph', job, [uuid]		
 
 	store: (filename, callback) ->
 		@redisfs.writeFile filename, callback
