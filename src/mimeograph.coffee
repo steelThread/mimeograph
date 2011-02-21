@@ -44,7 +44,7 @@ class Extractor extends Job
       
   extract: ->
     log "mimeograph (Extractor): extract #{@key}"
-    redisfs.redis2file @key, {deleteFile: false}, (err, file) =>
+    redisfs.redis2file @key, {deleteKey: false}, (err, file) =>
       if err? then @callback err
       else
         log "mimeograph (Extractor): extract file #{file}"
@@ -132,12 +132,12 @@ class Mimeograph extends EventEmitter
     @worker = @conn.worker 'mimeograph', jobs            
     @worker.on 'error',   _.bind @error, @
     @worker.on 'success', _.bind @success, @
-    #@worker.start()
+    @worker.start()
     log "mimeograph: done spinning up mimeograph"
         
-  execute: (file) ->
+  execute: (@file) ->
     log "mimeograph: execute #{file}"
-    redisfs.file2redis @file, (err, result) =>
+    redisfs.file2redis @file, {deleteFile: false}, (err, result) =>
       @key = result.key
       log "mimeograph: recieved #{@key}"
       @conn.enqueue 'mimeograph', 'extract', [@key]
@@ -178,10 +178,4 @@ class Mimeograph extends EventEmitter
 #
 #  CLI
 #
-exports.start = (filename) -> 
-  try 
-    fs.fstatSync filename
-    new Mimeograph().execute(filename) 
-  catch error
-    puts.red "No such file '#{filename}'!"
-    process.exit -1
+exports.start = (filename) -> new Mimeograph().execute(filename) 
