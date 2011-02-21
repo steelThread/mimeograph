@@ -50,8 +50,7 @@ class Extractor extends Job
       else
         log "mimeograph (Extractor): extract file #{file}"
         proc = spawn "pdftotext" , [file, "-"]
-        proc.stdout.on "data", (data) =>
-          @text.accumulate data
+        proc.stdout.on "data", (data) => @text.accumulate data
         proc.stdout.on "end", =>
           @callback null, @text.value.toString().trim()
           delete @text
@@ -73,9 +72,16 @@ class Splitter extends Job
     redisfs.redis2file @key, (err, file) =>
       if err? then @callback err
       else
-        # gs -SDEVICE=jpeg -r300x300 -sPAPERSIZE=letter -sOutputFile=pdf_%04d.jpg -dNOPAUSE -- filename
         log "mimeograph (Splitter): splitting file: #{file}"
-        proc = spawn "gs" , ["-SDEVICE=jpeg", "-r300x300", "-sPAPERSIZE=letter", "-sOutputFile=#{file}_%04d.jpg" , "-dNOPAUSE", "--", file]
+        proc = spawn "gs", [
+          "-SDEVICE=jpeg", 
+          "-r300x300", 
+          "-sPAPERSIZE=letter", 
+          "-sOutputFile=#{file}_%04d.jpg", 
+          "-dNOPAUSE", 
+          "--", 
+          file
+        ]
         proc.stdout.on "end", =>
           log "mimeograph (Splitter): done."
           fs.readdir "/tmp", (err, files) =>
@@ -92,7 +98,7 @@ class Splitter extends Job
 class Converter extends Job
   convert: ->
     log "mimeograph (Converter): convert #{@key}"
-    redisfs.redis2file @key, (err, file) =>
+    redisfs.redis2file @key, (err, file) => 
       if err? then @callback err
       else
         spawn("convert", ["-quiet", file, "#{file}.tif"]).on 'exit', =>
@@ -109,8 +115,8 @@ class Recognizer extends Job
       else
         spawn("tesseract", [file, file]).on 'exit', =>            
           fs.readFile "#{file}.txt", (err, data) =>
-          log "tesseract data for #{file}:#{data}"
-          @callback null, data
+            log "tesseract data for #{file}:#{data}"
+            @callback null, data
 
 #
 # The resque job callbacks
