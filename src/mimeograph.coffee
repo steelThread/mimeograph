@@ -16,6 +16,7 @@ resque         = require 'coffee-resque'
 redisfs = redisfs 
   namespace: 'mimeograph'
   prefix: 'mimeograph-'
+  encoding: 'base64'
 
 #
 # Beyond simple accumulator
@@ -51,9 +52,9 @@ class Extractor extends Job
         proc = spawn "pdftotext" , [file, "-"]
         proc.stdout.on "data", (data) =>
           @text.accumulate data
-          proc.stdout.on "end", =>
-            @callback null, @text.value.toString().trim()
-            delete @text
+        proc.stdout.on "end", =>
+          @callback null, @text.value.toString().trim()
+          delete @text
 
 #       
 # Copy a file (original from extractor phase) from redis 
