@@ -13,8 +13,8 @@
     "coffee-resque": ">= 0.1.0",
     "redisfs":       ">= 0.1.0"
   },
-  "bin": { "certain": "./bin/mimeograph.coffee" },
-  "directories": { "lib": "./lib" },
+  "directories": { "lib": "./lib", "bin": "./bin" },
+  "bin": { "mimeograph": "./bin/mimeograph.coffee" },
   "keywords": ["node", "pdf", "ocr", "text extraction", "indexing"],
   "engines": { "node": ">= 0.4.0" }
 }
