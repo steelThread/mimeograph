@@ -44,7 +44,7 @@ class Extractor extends Job
       
   extract: ->
     log "mimeograph (Extractor): extract #{@key}"
-    redisfs.redis2file @key, (err, file) =>
+    redisfs.redis2file @key, {deleteFile: false}, (err, file) =>
       if err? then @callback err
       else
         log "mimeograph (Extractor): extract file #{file}"
