@@ -83,7 +83,7 @@ class Splitter extends Job
   isSplitImage: (basename, filename) ->
     if filename.match "^#{basename}?.*jpg?$"
       log "mimeograph (Splitter): found matching file: #{filename}"
-      @callback null, filename.trim()
+      @callback null, filename
         
 #
 # Convert the file to a tif and pump back into redis.
@@ -145,7 +145,10 @@ class Mimeograph extends EventEmitter
   success: (worker, queue, job, result) ->
     switch job.class 
       when 'extract'      
-        if _.isEmpty result then @queue 'split', @key else @end()
+        if _.isEmpty result then @queue 'split', @key 
+        else 
+          redisfs.redis.del @key
+          @end()
       when 'split'
         @store result, (key) => @queue 'convert', key
       when 'convert'
@@ -167,9 +170,14 @@ class Mimeograph extends EventEmitter
   end: ->
     log "mimeograph: end."
     redisfs.end()
+    @worker.end()
+    @conn.end()
     @emit 'done', result
     process.exit()  
 
+#
+#  CLI
+#
 exports.start = (filename) -> 
   try 
     fs.fstatSync filename
