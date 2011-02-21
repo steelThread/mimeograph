@@ -5,7 +5,7 @@ puts           = console.log
 
 exports.log       = (msg) -> log msg.green
 exports.log.warn  = (msg) -> log msg.yellow
-exports.log.err = (msg) -> log msg.red
+exports.log.err   = (msg) -> log msg.red
 
 exports.puts       = (obj) -> puts stringify obj
 exports.puts.green = (obj) -> puts stringify(obj).green
@@ -24,4 +24,4 @@ exports._.isEmptyObject = (val) -> _.isObject(val) and _.isEmpty(val)
 #
 # catch all the junk
 #
-process.on 'uncaughtException', (err) -> log.error "Caught exception: #{err}"
+process.on 'uncaughtException', (err) -> exports.log.error "Caught exception: #{err}"
