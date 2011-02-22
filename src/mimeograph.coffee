@@ -104,7 +104,7 @@ class Converter extends Job
       return @callback err if err?
       log.warn "Convert #{file}"
       name = file.substr file.lastIndexOf('/') + 1
-      proc "convert", ["-quiet", file, "/tmp/#{name}.tif"]
+      proc = spawn "convert", ["-quiet", file, "/tmp/#{name}.tif"]
       proc.on 'exit', =>
         @callback "/tmp/#{name}.tif"   
 
@@ -120,9 +120,8 @@ class Recognizer extends Job
       name = file.substr file.lastIndexOf('/') + 1
       name = name.substr 0, name.indexOf '.'
       log "plain name #{name}"
-      proc "tesseract", [file, "/tmp/#{name}"]
-      proc.on 'exit', (err) =>            
-        return @callback err if err?
+      proc = spawn "tesseract", [file, "/tmp/#{name}"]
+      proc.on 'exit', (err) =>  
         fs.readFile "/tmp/#{name}.txt", 'utf8', (err, data) =>
           log "tesseract data for #{file}:#{data}"
           @callback data
