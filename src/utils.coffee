@@ -24,4 +24,4 @@ exports._.isEmptyObject = (val) -> _.isObject(val) and _.isEmpty(val)
 #
 # catch all the junk
 #
-process.on 'uncaughtException', (err) -> exports.log.err "Caught exception: #{err.stack}"
+process.on 'uncaughtException', (err) -> exports.log.err "Caught exception: #{err}"

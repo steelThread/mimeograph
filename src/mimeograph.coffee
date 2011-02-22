@@ -46,14 +46,13 @@ class Extractor extends Job
   extract: ->
     log "(Extractor): extract #{@key}"
     redisfs.redis2file @key, deleteKey: false, (err, file) =>
-      if err? then @callback err
-      else
-        log "(Extractor): extract file #{file}"
-        proc = spawn "pdftotext" , [file, "-"]
-        proc.stdout.on "data", (data) => @text.accumulate data
-        proc.stdout.on "end", =>
-          @callback @text.value.toString().trim()
-          delete @text
+      return @callback err if err?
+      log "(Extractor): extract file #{file}"
+      proc = spawn "pdftotext" , [file, "-"]
+      proc.stdout.on "data", (data) => @text.accumulate data
+      proc.stdout.on "end", =>
+        @callback @text.value.toString().trim()
+        delete @text
 
 #       
 # Copy a file (original from extractor phase) from redis 
@@ -73,24 +72,23 @@ class Splitter extends Job
   split: ->
     log "(Splitter): split #{@key}"
     redisfs.redis2file @key, (err, file) =>
-      if err? then @callback err
-      else
-        name = file.substr file.lastIndexOf('/') + 1
-        log "(Splitter): splitting file: #{file}"
-        proc = spawn "gs", [
-          "-SDEVICE=jpeg" 
-          "-r300x300"
-          "-sPAPERSIZE=letter"
-          "-sOutputFile=/tmp/#{name}_%04d.jpg"
-          "-dNOPAUSE"
-          "--"
-          file
-        ]
-        proc.stdout.on "end", =>
-          log "(Splitter): done."
-          fs.readdir "/tmp", (err, files) =>
-            @gather name, "#{candidate}" for candidate in files
-            @callback @splits
+      return @callback err if err?
+      name = file.substr file.lastIndexOf('/') + 1
+      log "(Splitter): splitting file: #{file}"
+      proc = spawn "gs", [
+        "-SDEVICE=jpeg" 
+        "-r300x300"
+        "-sPAPERSIZE=letter"
+        "-sOutputFile=/tmp/#{name}_%04d.jpg"
+        "-dNOPAUSE"
+        "--"
+        file
+      ]
+      proc.stdout.on "end", =>
+        log "(Splitter): done."
+        fs.readdir "/tmp", (err, files) =>
+          @gather name, "#{candidate}" for candidate in files
+          @callback @splits
                     
   gather: (basename, filename) ->
     @splits.push "/tmp/#{filename}" if filename.match "^#{basename}?.*jpg?$"
@@ -102,10 +100,11 @@ class Converter extends Job
   convert: ->
     log "(Converter): convert #{@key}"
     redisfs.redis2file @key, (err, file) => 
-      if err? then @callback err
-      else
-        spawn("convert", ["-quiet", file, "#{file}.tif"]).on 'exit', =>
-          @callback "#{file}.tif"   
+      return @callback err if err?
+      log.warn "Convert #{file}"
+      name = file.substr file.lastIndexOf('/') + 1
+      spawn("convert", ["-quiet", file, "/tmp/#{name}.tif"]).on 'exit', (err) =>
+        @callback "/tmp/#{name}.tif"   
 
 #
 # Convert to a txt file.
@@ -114,21 +113,20 @@ class Recognizer extends Job
   recognize: ->
     log "(Recognizer): recognize #{@key}"
     redisfs.redis2file @key, {suffix:'.tif'}, (err, file) =>
-      if err? then @callback err
-      else
-        spawn("tesseract", [file, file]).on 'exit', =>            
-          fs.readFile "#{file}.txt", (err, data) =>
-            log "tesseract data for #{file}:#{data}"
-            @callback data
+      return @callback err if err?
+      spawn("tesseract", [file, file]).on 'exit', =>            
+        fs.readFile "#{file}.txt", (err, data) =>
+          log "tesseract data for #{file}:#{data}"
+          @callback data
 
 #
 # The resque job callbacks
 #
 jobs = 
-  extract: (filename, callback) -> new Extractor(filename, callback).extract() 
-  split: (filename, callback) -> new Splitter(filename, callback).split()
-  convert: (filename, callback) -> new Converter(filename, callback).convert()
-  recognize: (filename, callback)  -> new Recognizer(filename, callback).recognize()
+  extract:   (filename, callback) -> new Extractor(filename, callback).extract() 
+  split:     (filename, callback) -> new Splitter(filename, callback).split()
+  convert:   (filename, callback) -> new Converter(filename, callback).convert()
+  recognize: (filename, callback) -> new Recognizer(filename, callback).recognize()
 
 #
 # Manages the process.
@@ -162,6 +160,7 @@ class Mimeograph extends EventEmitter
           @end()
       when 'split'
         for file in result
+          log.warn "Adding convert job for: #{file}"
           @store file, (key) => @queue 'convert', key
       when 'convert'
         @store result, (key) => @queue 'recognize', key
