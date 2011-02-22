@@ -44,15 +44,15 @@ class Extractor extends Job
     super @key, @callback
       
   extract: ->
-    log "mimeograph (Extractor): extract #{@key}"
-    redisfs.redis2file @key, {deleteKey: false}, (err, file) =>
+    log "(Extractor): extract #{@key}"
+    redisfs.redis2file @key, deleteKey: false, (err, file) =>
       if err? then @callback err
       else
-        log "mimeograph (Extractor): extract file #{file}"
+        log "(Extractor): extract file #{file}"
         proc = spawn "pdftotext" , [file, "-"]
         proc.stdout.on "data", (data) => @text.accumulate data
         proc.stdout.on "end", =>
-          @callback null, @text.value.toString().trim()
+          @callback @text.value.toString().trim()
           delete @text
 
 #       
@@ -67,56 +67,59 @@ class Extractor extends Job
 # and pass that to the callback. 
 #
 class Splitter extends Job
+  constructor: (@key, @callback, @splits = []) ->
+    super @key, @callback
+
   split: ->
-    log "mimeograph (Splitter): split #{@key}"
+    log "(Splitter): split #{@key}"
     redisfs.redis2file @key, (err, file) =>
       if err? then @callback err
       else
-        log "mimeograph (Splitter): splitting file: #{file}"
+        name = file.substr file.lastIndexOf('/') + 1
+        log "(Splitter): splitting file: #{file}"
         proc = spawn "gs", [
-          "-SDEVICE=jpeg", 
-          "-r300x300", 
-          "-sPAPERSIZE=letter", 
-          "-sOutputFile=#{file}_%04d.jpg", 
-          "-dNOPAUSE", 
-          "--", 
+          "-SDEVICE=jpeg" 
+          "-r300x300"
+          "-sPAPERSIZE=letter"
+          "-sOutputFile=/tmp/#{name}_%04d.jpg"
+          "-dNOPAUSE"
+          "--"
           file
         ]
         proc.stdout.on "end", =>
-          log "mimeograph (Splitter): done."
+          log "(Splitter): done."
           fs.readdir "/tmp", (err, files) =>
-            @isSplitImage file, "/tmp/#{candidate}" for candidate in files
+            @gather name, "#{candidate}" for candidate in files
+            @callback @splits
                     
-  isSplitImage: (basename, filename) ->
-    if filename.match "^#{basename}?.*jpg?$"
-      log "mimeograph (Splitter): found matching file: #{filename}"
-      @callback null, filename
+  gather: (basename, filename) ->
+    @splits.push "/tmp/#{filename}" if filename.match "^#{basename}?.*jpg?$"
         
 #
 # Convert the file to a tif and pump back into redis.
 #
 class Converter extends Job
   convert: ->
-    log "mimeograph (Converter): convert #{@key}"
+    log "(Converter): convert #{@key}"
     redisfs.redis2file @key, (err, file) => 
       if err? then @callback err
       else
         spawn("convert", ["-quiet", file, "#{file}.tif"]).on 'exit', =>
-          @callback null, "#{file}.tif"   
+          @callback "#{file}.tif"   
 
 #
 # Convert to a txt file.
 #   
 class Recognizer extends Job
   recognize: ->
-    log "mimeograph (Recognizer): recognize #{@key}"
+    log "(Recognizer): recognize #{@key}"
     redisfs.redis2file @key, {suffix:'.tif'}, (err, file) =>
       if err? then @callback err
       else
         spawn("tesseract", [file, file]).on 'exit', =>            
           fs.readFile "#{file}.txt", (err, data) =>
             log "tesseract data for #{file}:#{data}"
-            @callback null, data
+            @callback data
 
 #
 # The resque job callbacks
@@ -134,19 +137,19 @@ jobs =
 #
 class Mimeograph extends EventEmitter
   constructor: ->
-    log "mimeograph: spinning up mimeograph"
+    log "spinning up mimeograph"
     @conn = resque.connect namespace: 'mimeograph'
     @worker = @conn.worker 'mimeograph', jobs            
     @worker.on 'error',   _.bind @error, @
     @worker.on 'success', _.bind @success, @
     @worker.start()
-    log "mimeograph: done spinning up mimeograph"
+    log "done spinning up mimeograph"
         
   execute: (@file) ->
-    log "mimeograph: execute #{file}"
-    redisfs.file2redis @file, {deleteFile: false}, (err, result) =>
+    log "processing #{file}"
+    redisfs.file2redis @file, deleteFile: false, (err, result) =>
       @key = result.key
-      log "mimeograph: recieved #{@key}"
+      log "recieved #{@key}"
       @conn.enqueue 'mimeograph', 'extract', [@key]
 
   success: (worker, queue, job, result) ->
@@ -154,14 +157,16 @@ class Mimeograph extends EventEmitter
       when 'extract'      
         if _.isEmpty result then @queue 'split', @key 
         else 
+          log.warn "#{@file} does not require OCR."
           redisfs.redis.del @key
           @end()
       when 'split'
-        @store result, (key) => @queue 'convert', key
+        for file in result
+          @store file, (key) => @queue 'convert', key
       when 'convert'
         @store result, (key) => @queue 'recognize', key
       when 'recognize'
-        log "mimeograph: done, recognized #{result.length} chars"
+        log "done, recognized #{result.length} chars"
 
   queue: (job, key) =>
     @conn.enqueue 'mimeograph', job, [key]     
@@ -171,15 +176,14 @@ class Mimeograph extends EventEmitter
       if err? then log.err "#{JSON.stringify err}" else callback result.key
 
   error: (error, worker, queue, job) -> 
-    log "mimeograph: Error processing job #{JSON.stringify job}.  #{JSON.stringify error}"
+    log "Error processing job #{JSON.stringify job}.  #{JSON.stringify error}"
     @end()
         
   end: ->
-    log "mimeograph: end."
+    log "shutting down."
     redisfs.end()
     @worker.end()
     @conn.end()
-    @emit 'done', result
     process.exit()  
 
 #

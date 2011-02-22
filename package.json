@@ -1,20 +1,25 @@
 {
   "name": "mimeograph",
-  "description": "CoffeeScript lib for PDF OCR and text extraction.",
   "version": "0.1.0",
+  "description": "CoffeeScript lib for PDF OCR and text extraction.",
+  "keywords": ["node", "pdf", "ocr", "text extraction", "indexing"],
+  "homepage": "https://github.com/morologous/mimeograph",
   "author": "Jason Yankus <jason@yankus.net>",
   "contributors": [ 
-    {"name": "Jason Yankus",  "email": "jason@yankus.net"},
     {"name": "Sean McDaniel", "email": "sean.mcdaniel@me.com"}
   ],
+  "main": "./lib/mimeograph",
+  "bin": { "mimeograph": "./bin/mimeograph.coffee" },
+  "directories": { "lib": "./lib" },
+  "respository": { 
+    "type": "git", 
+    "url": "https://github.com/morologous/mimeograph.git"
+  },
   "dependencies": {
     "underscore":    ">= 1.1.4",
     "colors":        ">= 0.3.0",
     "coffee-resque": ">= 0.1.0",
     "redisfs":       ">= 0.1.0"
   },
-  "directories": { "lib": "./lib", "bin": "./bin" },
-  "bin": { "mimeograph": "./bin/mimeograph.coffee" },
-  "keywords": ["node", "pdf", "ocr", "text extraction", "indexing"],
   "engines": { "node": ">= 0.4.0" }
 }
