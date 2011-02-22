@@ -17,6 +17,7 @@ redisfs = redisfs
   namespace: 'mimeograph'
   prefix: 'mimeograph-'
   encoding: 'base64'
+  deleteFile: false
 
 #
 # Beyond simple accumulator
@@ -94,7 +95,7 @@ class Splitter extends Job
     @splits.push "/tmp/#{filename}" if filename.match "^#{basename}?.*jpg?$"
         
 #
-# Convert the file to a tif and pump back into redis.
+# Convert the jpg to a tif and pump back into redis.
 #
 class Converter extends Job
   convert: ->
@@ -103,7 +104,8 @@ class Converter extends Job
       return @callback err if err?
       log.warn "Convert #{file}"
       name = file.substr file.lastIndexOf('/') + 1
-      spawn("convert", ["-quiet", file, "/tmp/#{name}.tif"]).on 'exit', =>
+      proc "convert", ["-quiet", file, "/tmp/#{name}.tif"]
+      proc.on 'exit', =>
         @callback "/tmp/#{name}.tif"   
 
 #
@@ -112,11 +114,16 @@ class Converter extends Job
 class Recognizer extends Job
   recognize: ->
     log "(Recognizer): recognize #{@key}"
-    redisfs.redis2file @key, (err, file) =>
+    redisfs.redis2file @key, suffix:'.tif', (err, file) =>
       return @callback err if err?
+      log "Recognize tif : #{file}"
       name = file.substr file.lastIndexOf('/') + 1
-      spawn("tesseract", [file, "/tmp/#{name}"]).on 'exit', =>            
-        fs.readFile "/tmp/#{name}.txt", (err, data) =>
+      name = name.substr 0, name.indexOf '.'
+      log "plain name #{name}"
+      proc "tesseract", [file, "/tmp/#{name}"]
+      proc.on 'exit', (err) =>            
+        return @callback err if err?
+        fs.readFile "/tmp/#{name}.txt", 'utf8', (err, data) =>
           log "tesseract data for #{file}:#{data}"
           @callback data
 
