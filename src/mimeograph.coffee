@@ -103,7 +103,7 @@ class Converter extends Job
       return @callback err if err?
       log.warn "Convert #{file}"
       name = file.substr file.lastIndexOf('/') + 1
-      spawn("convert", ["-quiet", file, "/tmp/#{name}.tif"]).on 'exit', (err) =>
+      spawn("convert", ["-quiet", file, "/tmp/#{name}.tif"]).on 'exit', =>
         @callback "/tmp/#{name}.tif"   
 
 #
@@ -112,10 +112,11 @@ class Converter extends Job
 class Recognizer extends Job
   recognize: ->
     log "(Recognizer): recognize #{@key}"
-    redisfs.redis2file @key, {suffix:'.tif'}, (err, file) =>
+    redisfs.redis2file @key, (err, file) =>
       return @callback err if err?
-      spawn("tesseract", [file, file]).on 'exit', =>            
-        fs.readFile "#{file}.txt", (err, data) =>
+      name = file.substr file.lastIndexOf('/') + 1
+      spawn("tesseract", [file, "/tmp/#{name}"]).on 'exit', =>            
+        fs.readFile "/tmp/#{name}.txt", (err, data) =>
           log "tesseract data for #{file}:#{data}"
           @callback data
 
