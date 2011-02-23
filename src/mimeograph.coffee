@@ -17,7 +17,6 @@ redisfs = redisfs
   namespace: 'mimeograph'
   prefix: 'mimeograph-'
   encoding: 'base64'
-  deleteFile: false
 
 #
 # Beyond simple accumulator
@@ -42,16 +41,14 @@ class Job
 #
 class Extractor extends Job
   constructor: (@key, @callback, @text = new Accumulator()) ->
-    super @key, @callback
-      
   extract: ->
     log "(Extractor): extract #{@key}"
     redisfs.redis2file @key, deleteKey: false, (err, file) =>
       return @callback err if err?
       log "(Extractor): extract file #{file}"
-      proc = spawn "pdftotext" , [file, "-"]
-      proc.stdout.on "data", (data) => @text.accumulate data
-      proc.stdout.on "end", =>
+      proc = spawn 'pdftotext', [file, '-']
+      proc.stdout.on 'data', (data) => @text.accumulate data
+      proc.on 'exit', =>
         @callback @text.value.toString().trim()
         delete @text
 
@@ -68,26 +65,24 @@ class Extractor extends Job
 #
 class Splitter extends Job
   constructor: (@key, @callback, @splits = []) ->
-    super @key, @callback
-
   split: ->
     log "Split: #{@key}"
     redisfs.redis2file @key, deleteKey: true, (err, file) =>
       return @callback err if err?
-      name = file.substr file.lastIndexOf('/') + 1
+      target = file.substr file.lastIndexOf('/') + 1
       log "(Splitter): splitting file: #{file}"
-      proc = spawn "gs", [
-        "-SDEVICE=jpeg" 
-        "-r300x300"
-        "-sPAPERSIZE=letter"
-        "-sOutputFile=/tmp/#{name}_%04d.jpg"
-        "-dNOPAUSE"
-        "--"
+      proc = spawn 'gs', [
+        '-SDEVICE=jpeg' 
+        '-r300x300'
+        '-sPAPERSIZE=letter'
+        "-sOutputFile=/tmp/#{target}_%04d.jpg"
+        '-dNOPAUSE'
+        '--'
         file
       ]
       proc.stdout.on "end", =>
         fs.readdir "/tmp", (err, files) =>
-          @gather name, "#{candidate}" for candidate in files
+          @gather target, "#{candidate}" for candidate in files
           @callback @splits
                     
   gather: (basename, filename) ->
@@ -101,10 +96,9 @@ class Converter extends Job
     log "Convert: #{@key}"
     redisfs.redis2file @key, filename: @key, (err, file) => 
       return @callback err if err?
-      target = file.substr 0, file.indexOf '.'
-      proc = spawn "convert", ["-quiet", "-compress", "None", file, "#{target}.tif"]
-      proc.on 'exit', =>
-        @callback "#{target}.tif"   
+      target = "#{file.substr 0, file.indexOf '.'}.tif"
+      proc = spawn "convert", ["-quiet", file, target]
+      proc.on 'exit', => @callback target   
 
 #
 # Convert to a txt file.
@@ -116,7 +110,8 @@ class Recognizer extends Job
       return @callback err if err?
       target = file.substr 0, file.indexOf '.'
       proc = spawn "tesseract", [file, target]
-      proc.on 'exit', (err) =>  
+      proc.on 'exit', (code) =>
+        return callback new Error 'tesseract' if code isnt 0  
         fs.readFile "#{target}.txt", 'utf8', (err, data) =>
           log "tesseract data for #{file}:#{data}"
           @callback data
@@ -150,25 +145,25 @@ class Mimeograph extends EventEmitter
     redisfs.file2redis @file, deleteFile: false, (err, result) =>
       @key = result.key
       log "recieved #{@key}"
-      @conn.enqueue 'mimeograph', 'extract', [@key]
+      @enqueue 'extract', [@key]
 
   success: (worker, queue, job, result) ->
     switch job.class 
       when 'extract'      
-        if _.isEmpty result then @queue 'split', @key 
+        if _.isEmpty result then @enqueue 'split', @key 
         else 
           log.warn "#{@file} does not require OCR."
           redisfs.redis.del @key
           @end()
       when 'split'
         for file in result
-          @store file, (key) => @queue 'convert', key
+          @store file, (key) => @enqueue 'convert', key
       when 'convert'
-        @store result, (key) => @queue 'recognize', key
+        @store result, (key) => @enqueue 'recognize', key
       when 'recognize'
         log "done, recognized #{result.length} chars"
 
-  queue: (job, key) =>
+  enqueue: (job, key) =>
     @conn.enqueue 'mimeograph', job, [key]     
 
   store: (filename, callback) ->
@@ -191,4 +186,4 @@ class Mimeograph extends EventEmitter
 #
 #  CLI
 #
-exports.start = (filename) -> new Mimeograph().execute(filename) 
+exports.start = (filename) -> new Mimeograph().execute filename
