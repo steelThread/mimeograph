@@ -71,8 +71,8 @@ class Splitter extends Job
     super @key, @callback
 
   split: ->
-    log "(Splitter): split #{@key}"
-    redisfs.redis2file @key, (err, file) =>
+    log "Split: #{@key}"
+    redisfs.redis2file @key, deleteKey: true, (err, file) =>
       return @callback err if err?
       name = file.substr file.lastIndexOf('/') + 1
       log "(Splitter): splitting file: #{file}"
@@ -86,7 +86,6 @@ class Splitter extends Job
         file
       ]
       proc.stdout.on "end", =>
-        log "(Splitter): done."
         fs.readdir "/tmp", (err, files) =>
           @gather name, "#{candidate}" for candidate in files
           @callback @splits
@@ -99,30 +98,26 @@ class Splitter extends Job
 #
 class Converter extends Job
   convert: ->
-    log "(Converter): convert #{@key}"
-    redisfs.redis2file @key, (err, file) => 
+    log "Convert: #{@key}"
+    redisfs.redis2file @key, filename: @key, (err, file) => 
       return @callback err if err?
-      log.warn "Convert #{file}"
-      name = file.substr file.lastIndexOf('/') + 1
-      proc = spawn "convert", ["-quiet", file, "/tmp/#{name}.tif"]
+      target = file.substr 0, file.indexOf '.'
+      proc = spawn "convert", ["-quiet", file, "#{target}.tif"]
       proc.on 'exit', =>
-        @callback "/tmp/#{name}.tif"   
+        @callback "#{target}.tif"   
 
 #
 # Convert to a txt file.
 #   
 class Recognizer extends Job
   recognize: ->
-    log "(Recognizer): recognize #{@key}"
-    redisfs.redis2file @key, suffix:'.tif', (err, file) =>
+    log "Recognize: #{@key}"
+    redisfs.redis2file @key, {filename: @key}, (err, file) =>
       return @callback err if err?
-      log "Recognize tif : #{file}"
-      name = file.substr file.lastIndexOf('/') + 1
-      name = name.substr 0, name.indexOf '.'
-      log "plain name #{name}"
-      proc = spawn "tesseract", [file, "/tmp/#{name}"]
+      target = file.substr 0, file.indexOf '.'
+      proc = spawn "tesseract", [file, target]
       proc.on 'exit', (err) =>  
-        fs.readFile "/tmp/#{name}.txt", 'utf8', (err, data) =>
+        fs.readFile "#{target}.txt", 'utf8', (err, data) =>
           log "tesseract data for #{file}:#{data}"
           @callback data
 
@@ -167,7 +162,6 @@ class Mimeograph extends EventEmitter
           @end()
       when 'split'
         for file in result
-          log.warn "Adding convert job for: #{file}"
           @store file, (key) => @queue 'convert', key
       when 'convert'
         @store result, (key) => @queue 'recognize', key
@@ -178,8 +172,10 @@ class Mimeograph extends EventEmitter
     @conn.enqueue 'mimeograph', job, [key]     
 
   store: (filename, callback) ->
-    redisfs.file2redis filename, (err, result) =>
-      if err? then log.err "#{JSON.stringify err}" else callback result.key
+	# use the filename as the key as it will be unique after the split
+    redisfs.file2redis filename, key: filename, (err, result) =>
+      return log.err "#{JSON.stringify err}" if err?
+      callback result.key
 
   error: (error, worker, queue, job) -> 
     log "Error processing job #{JSON.stringify job}.  #{JSON.stringify error}"
