@@ -102,7 +102,7 @@ class Converter extends Job
     redisfs.redis2file @key, filename: @key, (err, file) => 
       return @callback err if err?
       target = file.substr 0, file.indexOf '.'
-      proc = spawn "convert", ["-quiet", file, "#{target}.tif"]
+      proc = spawn "convert", ["-quiet", "-compress", "None", file, "#{target}.tif"]
       proc.on 'exit', =>
         @callback "#{target}.tif"   
 
