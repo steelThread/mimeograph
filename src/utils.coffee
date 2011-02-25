@@ -20,8 +20,12 @@ stringify = (obj) -> if _.isString obj then obj else inspect obj
 exports._ = _
 exports._.isObject      = (val) -> '[object Object]' is toString.apply val
 exports._.isEmptyObject = (val) -> _.isObject(val) and _.isEmpty(val)
+exports._.lpad          = (val, length = 10, char = '0') ->
+  val = val.toString()
+  val = char + val while val.length < length
+  val
 
 #
 # catch all the junk
 #
-process.on 'uncaughtException', (err) -> exports.log.err "Caught exception: #{err}"
+process.on 'uncaughtException', (err) -> exports.log.err "Caught exception: #{err.stack}"
