@@ -18,14 +18,13 @@ redisfs = redisfs
   encoding  : 'base64'
 
 #
-# Beyond simple accumulator
+# convience
 #
-class Accumulator
-  constructor: (@value = '') ->
-  accumulate:  (data) -> @value += data if data?
+GLOBAL.file2redis = _.bind redisfs.file2redis, redisfs
+GLOBAL.redis2file = _.bind redisfs.redis2file, redisfs
 
 #
-# Base class for mimeographs jobs aka processing steps.
+# Base class for mimeographs jobs.
 #
 class Job
   constructor: (@key, @callback) ->
@@ -35,41 +34,35 @@ class Job
 #
 # Copy a file from redis to the filesystem and run pdf2text.
 # Results are accumulated. If the accumulated result is empty
-# then ocr needs to occur so split else done. For this operation
-# the original file contents will remain in redis.
+# then ocr needs to occur.  
 #
-# Callback will receive the extracted text from the pdf.
+# callback will receive a hash with a text and key fields.
 #
 class Extractor extends Job
-  constructor: (@key, @callback, @text = new Accumulator()) -> 
+  constructor: (@key, @callback, @text = '') -> 
   extract: ->
-    redisfs.redis2file @key, {filename: @key, deleteKey: false}, (err, file) =>
+    redis2file @key, {file: @key, deleteKey: false}, (err, file) =>
       return @fail err if err?
       log "extracting - #{file}"
       proc = spawn 'pdftotext', [file, '-']
-      proc.stdout.on 'data', (data) => @text.accumulate data
+      proc.stdout.on 'data', (data) => @text += data if data?
       proc.on 'exit', (code) =>
-        return @fail "gs exit(#{code})" unless code is 0
+        return @fail "gs exit(#{code})" if code isnt 0
         @callback 
           key:  @key
-          text: @text.value.toString().trim()
+          text: @text.toString().trim()
         delete @text
 
 #
-# Copy a file (original from extractor phase) from redis
-# to the filesystem.  The file is split into individual
-# .jpg files us gs.  Each resulting filename is passed
-# to the callback.
+# Copy a file from redis to the filesystem.  The file is 
+# split into individual .jpg files using gs.  
 #
-# TODO The callback model here will need to change!
-# The correct protocol between resque and workers is to make
-# a single callback.  Would be best to accumulate the results
-# and pass that to the callback.
+# callback receives an array of all the split file paths
 #
 class Splitter  extends Job
   constructor: (@key, @callback, @pieces = []) ->
   split: ->
-    redisfs.redis2file @key, filename: @key, (err, file) =>
+    redis2file @key, file: @key, (err, file) =>
       return @fail err if err?
       target = file.substr 0, file.indexOf '.'
       log "splitting  - #{file}"
@@ -83,7 +76,7 @@ class Splitter  extends Job
         file
       ]
       proc.on 'exit', (code) =>
-        return @fail "gs exit(#{code})" unless code is 0
+        return @fail "gs exit(#{code})" if code isnt 0
         fs.readdir '/tmp', (err, files) =>
           @gather target, "#{candidate}" for candidate in files
           @callback @pieces
@@ -93,12 +86,15 @@ class Splitter  extends Job
     @pieces.push "/tmp/#{filename}" if filename.match "^#{target}-{1}"
 
 #
-# Convert the jpg to a tif and pump back into redis.
+# Copy a file from redis to the filesystem. 
+# Converts the copied jpg files into tiff format.
+#
+# callback recieves the path to the tiff file.
 #
 class Converter extends Job
   convert: ->
     log "converting - #{@key}"
-    redisfs.redis2file @key, filename: @key, (err, file) =>
+    redis2file @key, file: @key, (err, file) =>
       return @fail err if err?
       target = "#{file.substr 0, file.indexOf '.'}.tif"
       proc = spawn 'convert', ["-quiet", file, target]
@@ -107,33 +103,33 @@ class Converter extends Job
         @callback target
 
 #
-# Convert to a txt file.
+# OCR the tiff file and generate a text file for the result.
+#
+# callback receives the path the to text file.
 #
 class Recognizer extends Job
   recognize: ->
-    redisfs.redis2file @key, filename: @key, (err, file) =>
+    redis2file @key, file: @key, (err, file) =>
       return @fail err if err?
       target = file.substr 0, file.indexOf '.'
       proc = spawn 'tesseract', [file, target]
       proc.on 'exit', (code) =>
-        return @fail "tesseract exit(#{code})" unless code is 0
+        return @fail "tesseract exit(#{code})" if code isnt 0
         fs.readFile "#{target}.txt", (err, data) =>
           log "recognized - (#{data.length}) #{@key}"
-          @callback data
+          @callback "#{target}.txt"
 
 #
-# The resque job callbacks
+# The resque jobs
 #
 jobs =
-  extract   : (filename, callback) -> new Extractor(filename, callback).extract()
-  split     : (filename, callback) -> new Splitter(filename, callback).split()
-  convert   : (filename, callback) -> new Converter(filename, callback).convert()
-  recognize : (filename, callback) -> new Recognizer(filename, callback).recognize()
+  extract   : (key, callback) -> new Extractor(key, callback).extract()
+  split     : (key, callback) -> new Splitter(key, callback).split()
+  convert   : (key, callback) -> new Converter(key, callback).convert()
+  recognize : (key, callback) -> new Recognizer(key, callback).recognize()
 
 #
 # Manages the process.
-#
-# Worker model needs to be overhauled.  We should talk about this more.
 #
 class Mimeograph 
   constructor: (@redis = redisfs.redis) ->
@@ -153,7 +149,7 @@ class Mimeograph
       id = _.lpad id
       key = "/tmp/mimeograph-#{id}.pdf"
       @redis.set "mimeograh:job:#{id}:start", new Date().toISOString()
-      redisfs.file2redis file, {key: key, deleteFile: false}, (err, result) =>
+      file2redis file, {key: key, deleteFile: false}, (err, result) =>
         @enqueue 'extract', key
         log "OK - created job #{id} for file #{file}"
         @end()
@@ -170,26 +166,29 @@ class Mimeograph
       when 'convert'
         #@redis.incr "mimeograh:job:#{id}:num_processed", result.length
         @store result, 'recognize'
-      #when 'recognize' then log "done, recognized #{result.length} chars"
+      # when 'recognize' 
+      #   @redis.incr "mimeograh:job:#{id}:num_processed", result.length
+      #   log "done, recognized #{result.length} chars"
     
   enqueue: (job, key) =>
     @resque.enqueue 'mimeograph', job, [key]
 
-  store: (filename, job) ->
-    redisfs.file2redis filename, key: filename, (err, result) =>
+  store: (file, job) ->
+    file2redis file, key: file, (err, result) =>
       return log.err "#{JSON.stringify err}" if err?
-      @enqueue job, filename
+      @enqueue job, file
 
   error: (error, worker, queue, job) ->
-    log "Error processing job #{JSON.stringify job}.  #{JSON.stringify error}"
+    log.err "Error processing job #{JSON.stringify job}.  #{JSON.stringify error}"
 
   end: ->
     log 'exiting...'
-    if @resque then @resque.end() else redisfs.end()
+    if @resque? then @resque.end() else redisfs.end()
     @worker.end() if @worker?
 
 #
 #  exports
 #
-exports.start   = -> new Mimeograph().start()
-exports.request = (filename) -> new Mimeograph().request filename
+mimeograph = exports
+mimeograph.start   = -> new Mimeograph().start()
+mimeograph.request = (filename) -> new Mimeograph().request filename

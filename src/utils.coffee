@@ -28,4 +28,6 @@ exports._.lpad          = (val, length = 10, char = '0') ->
 #
 # catch all the junk
 #
-process.on 'uncaughtException', (err) -> exports.log.err "Caught exception: #{err.stack}"
+process.on 'uncaughtException', (err) -> 
+  exports.log.err "Caught exception: #{err.stack}"
+  process.exit(-1)
