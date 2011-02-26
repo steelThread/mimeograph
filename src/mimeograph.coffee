@@ -24,10 +24,15 @@ GLOBAL.file2redis = _.bind redisfs.file2redis, redisfs
 GLOBAL.redis2file = _.bind redisfs.redis2file, redisfs
 
 #
-# Base class for mimeographs jobs.
+# Base class for mimeograph jobs.
 #
 class Job
-  constructor: (@key, @callback) ->
+  constructor: (@context, @callback) -> 
+    @key = @context.key
+  
+  complete: (result) -> 
+    @callback _.extend @context, result   
+  
   fail: (err) ->
     @callback if _.isString err then new Error err else err
 
@@ -39,7 +44,9 @@ class Job
 # callback will receive a hash with a text and key fields.
 #
 class Extractor extends Job
-  constructor: (@key, @callback, @text = '') ->
+  constructor: (@context, @callback, @text = '') ->
+    super @context, @callback
+
   extract: ->
     redis2file @key, file: @key, deleteKey: false, (err, file) =>
       return @fail err if err?
@@ -48,9 +55,7 @@ class Extractor extends Job
       proc.stdout.on 'data', (data) => @text += data if data?
       proc.on 'exit', (code) =>
         return @fail "gs exit(#{code})" if code isnt 0
-        @callback 
-          key:  @key
-          text: @text.toString().trim()
+        @complete text: @text.toString().trim()
         delete @text
 
 #
@@ -60,7 +65,9 @@ class Extractor extends Job
 # callback receives an array of all the split file paths
 #
 class Splitter  extends Job
-  constructor: (@key, @callback, @pieces = []) ->
+  constructor: (@context, @callback, @pieces = []) ->
+    super @context, @callback
+
   split: ->
     redis2file @key, file: @key, (err, file) =>
       return @fail err if err?
@@ -79,7 +86,7 @@ class Splitter  extends Job
         return @fail "gs exit(#{code})" if code isnt 0
         fs.readdir '/tmp', (err, files) =>
           @gather target, "#{candidate}" for candidate in files
-          @callback @pieces
+          @complete pieces: @pieces
 
   gather: (target, filename) ->
     target = target.substr target.lastIndexOf('/') + 1
@@ -100,7 +107,7 @@ class Converter extends Job
       proc = spawn 'convert', ["-quiet", file, target]
       proc.on 'exit', (code) =>
         return @fail "convert exit(#{code})" unless code is 0
-        @callback target
+        @complete file: target
 
 #
 # OCR the tiff file and generate a text file for the result.
@@ -117,16 +124,16 @@ class Recognizer extends Job
         return @fail "tesseract exit(#{code})" if code isnt 0
         fs.readFile "#{target}.txt", (err, data) =>
           log "recognized - (#{data.length}) #{@key}"
-          @callback "#{target}.txt"
+          @complete file: "#{target}.txt"
 
 #
 # The resque jobs
 #
 jobs =
-  extract   : (key, callback) -> new Extractor(key, callback).extract()
-  split     : (key, callback) -> new Splitter(key, callback).split()
-  convert   : (key, callback) -> new Converter(key, callback).convert()
-  recognize : (key, callback) -> new Recognizer(key, callback).recognize()
+  extract   : (context, callback) -> new Extractor(context, callback).extract()
+  split     : (context, callback) -> new Splitter(context, callback).split()
+  convert   : (context, callback) -> new Converter(context, callback).convert()
+  recognize : (context, callback) -> new Recognizer(context, callback).recognize()
 
 #
 # Manages the process.
@@ -134,7 +141,7 @@ jobs =
 class Mimeograph 
   constructor: (count = 5, @redis = redisfs.redis, @workers = []) ->
     @resque = resque.connect
-      namespace: 'mimeograph'
+      namespace: 'resque:mimeograph'
       redis: @redis
     @worker i for i in [0...count]
 
@@ -146,35 +153,48 @@ class Mimeograph
     @redis.incr 'mimeograph:job:id', (err, id) =>
       id = _.lpad id
       key = "/tmp/mimeograph-#{id}.pdf"
-      @redis.set "mimeograh:job:#{id}:start", new Date().toISOString()
+      @redis.set "mimeograh:job:#{id}:start", _.now()
       file2redis file, key: key, deleteFile: false, (err, result) =>
-        @enqueue 'extract', key
-        log "OK - created mimeograph job:#{id} for file #{file}"
+        @enqueue 'extract', key, id
+        log.warn "OK - created job:#{id} for file #{file}"
         @end()
 
   success: (worker, queue, job, result) ->
     switch job.class
-      when 'extract'
-        if _.isEmpty result.text then @enqueue 'split', result.key
-        else
-          @redis.del key
-      when 'split'
-        #@redis.set "mimeograh:job:#{id}:num_files", result.length
-        @store file, 'convert' for file in result
-      when 'convert'
-        #@redis.incr "mimeograh:job:#{id}:num_processed", result.length
-        @store result, 'recognize'
-      # when 'recognize' 
-      #   @redis.incr "mimeograh:job:#{id}:num_processed", result.length
-      #   log "done, recognized #{result.length} chars"
+      when 'extract'   then @split result
+      when 'split'     then @convert result
+      when 'convert'   then @recognize result
+      when 'recognize' then @complete result
 
-  enqueue: (job, key) =>
-    @resque.enqueue 'mimeograph', job, [key]
+  split: (result) ->
+    if _.isEmpty result.text 
+      @enqueue 'split', result.key, result.id
+    else
+      @redis.set "mimeograh:job:#{id}:result", result.text
+      delete result.text
+      @redis.del result.key
+    
+  convert: (result) ->
+    @redis.set "mimeograh:job:#{result.id}:num_files", result.pieces.length
+    @store file, 'convert', result.id for file in result.pieces
 
-  store: (file, job) ->
+  recognize: (result) ->
+    @store result.file, 'recognize', result.id      
+
+  complete: (result) ->
+    @redis.incr "mimeograh:job:#{result.id}:num_processed", (err, processed) =>
+      @redis.get "mimeograh:job:#{result.id}:num_files", (err, total) =>
+        if processed is parseInt total
+          log.warn "complete   - finished job:#{result.id}"
+          @redis.set "mimeograh:job:#{result.id}:end", _.now()
+    
+  enqueue: (job, key, id) =>
+    @resque.enqueue 'mimeograph', job, [{key: key, id: id}]
+
+  store: (file, job, id) ->
     file2redis file, key: file, (err, result) =>
       return log.err "#{JSON.stringify err}" if err?
-      @enqueue job, file
+      @enqueue job, file, id
 
   error: (error, worker, queue, job) ->
     log.err "Error processing job #{JSON.stringify job}.  #{JSON.stringify error}"
@@ -186,7 +206,6 @@ class Mimeograph
     worker
 
   end: ->
-    log 'exiting...'
     worker.end() for worker in @workers
     if @resque? then @resque.end() else redisfs.end()
 
