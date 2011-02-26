@@ -24,6 +24,7 @@ and tesseract.
 	$ make link
 	
 ## Running
+
 	Usage:
 	  mimeograph [OPTIONS] filename
 
@@ -31,11 +32,14 @@ and tesseract.
 	  -h, --help         Displays options
 	  -v, --version      Shows certain's version.
 	  -w, --workers      Number of workers to create. Ex.: 5 (default)
+	  -s, --start        Starts a Mimeograph daemon.
+	  -r, --request      Kicks of the processing of a new file.
 
 	v0.1.0
 	
-	eg.  mimeograph test/test.pdf
-    
+	eg.  mimeograph -r test/test.pdf
+	     mimeograph -w 10 -s
+
 ## Dependencies
 Most node module dependencies will be fetched for you with the link target.  However 
 coffee-resque has yet to be bumped in the npm registry.
@@ -66,4 +70,4 @@ THE SOFTWARE.
 
 #### Author: [Jason Yankus]()
 #### Contributors: [Sean McDaniel]()
- 
+

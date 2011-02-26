@@ -18,7 +18,7 @@ redisfs = redisfs
   encoding  : 'base64'
 
 #
-# convience
+# convenience
 #
 GLOBAL.file2redis = _.bind redisfs.file2redis, redisfs
 GLOBAL.redis2file = _.bind redisfs.redis2file, redisfs
@@ -30,18 +30,18 @@ class Job
   constructor: (@key, @callback) ->
   fail: (err) ->
     @callback if _.isString err then new Error err else err
-    
+
 #
 # Copy a file from redis to the filesystem and run pdf2text.
 # Results are accumulated. If the accumulated result is empty
-# then ocr needs to occur.  
+# then ocr needs to occur.
 #
 # callback will receive a hash with a text and key fields.
 #
 class Extractor extends Job
-  constructor: (@key, @callback, @text = '') -> 
+  constructor: (@key, @callback, @text = '') ->
   extract: ->
-    redis2file @key, {file: @key, deleteKey: false}, (err, file) =>
+    redis2file @key, file: @key, deleteKey: false, (err, file) =>
       return @fail err if err?
       log "extracting - #{file}"
       proc = spawn 'pdftotext', [file, '-']
@@ -55,7 +55,7 @@ class Extractor extends Job
 
 #
 # Copy a file from redis to the filesystem.  The file is 
-# split into individual .jpg files using gs.  
+# split into individual .jpg files using gs.
 #
 # callback receives an array of all the split file paths
 #
@@ -81,12 +81,12 @@ class Splitter  extends Job
           @gather target, "#{candidate}" for candidate in files
           @callback @pieces
 
-  gather: (target, filename) -> 
+  gather: (target, filename) ->
     target = target.substr target.lastIndexOf('/') + 1
     @pieces.push "/tmp/#{filename}" if filename.match "^#{target}-{1}"
 
 #
-# Copy a file from redis to the filesystem. 
+# Copy a file from redis to the filesystem.
 # Converts the copied jpg files into tiff format.
 #
 # callback recieves the path to the tiff file.
@@ -132,26 +132,24 @@ jobs =
 # Manages the process.
 #
 class Mimeograph 
-  constructor: (@redis = redisfs.redis) ->
-    @resque = resque.connect 
+  constructor: (count = 5, @redis = redisfs.redis, @workers = []) ->
+    @resque = resque.connect
       namespace: 'mimeograph'
       redis: @redis
+    @worker i for i in [0...count]
 
   start: ->
-    log 'starting...'
-    @worker = @resque.worker 'mimeograph', jobs
-    @worker.on 'error',   _.bind @error,   @
-    @worker.on 'success', _.bind @success, @
-    @worker.start()
+    worker.start() for worker in @workers
+    log.warn "Mimeograph started with #{@workers.length} workers."
 
-  request: (file) ->
+  process: (file) ->
     @redis.incr 'mimeograph:job:id', (err, id) =>
       id = _.lpad id
       key = "/tmp/mimeograph-#{id}.pdf"
       @redis.set "mimeograh:job:#{id}:start", new Date().toISOString()
-      file2redis file, {key: key, deleteFile: false}, (err, result) =>
+      file2redis file, key: key, deleteFile: false, (err, result) =>
         @enqueue 'extract', key
-        log "OK - created job #{id} for file #{file}"
+        log "OK - created mimeograph job:#{id} for file #{file}"
         @end()
 
   success: (worker, queue, job, result) ->
@@ -169,7 +167,7 @@ class Mimeograph
       # when 'recognize' 
       #   @redis.incr "mimeograh:job:#{id}:num_processed", result.length
       #   log "done, recognized #{result.length} chars"
-    
+
   enqueue: (job, key) =>
     @resque.enqueue 'mimeograph', job, [key]
 
@@ -181,14 +179,20 @@ class Mimeograph
   error: (error, worker, queue, job) ->
     log.err "Error processing job #{JSON.stringify job}.  #{JSON.stringify error}"
 
+  worker: (name) ->
+    @workers.push worker = @resque.worker 'mimeograph', jobs
+    worker.on 'error',   _.bind @error,   @
+    worker.on 'success', _.bind @success, @
+    worker
+
   end: ->
     log 'exiting...'
+    worker.end() for worker in @workers
     if @resque? then @resque.end() else redisfs.end()
-    @worker.end() if @worker?
 
 #
 #  exports
 #
 mimeograph = exports
-mimeograph.start   = -> new Mimeograph().start()
-mimeograph.request = (filename) -> new Mimeograph().request filename
+mimeograph.start   = (count = 5)-> new Mimeograph(count).start()
+mimeograph.process = (filename) -> new Mimeograph().process filename
