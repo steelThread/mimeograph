@@ -22,9 +22,9 @@ exports._.isObject      = (val) -> '[object Object]' is toString.apply val
 exports._.isEmptyObject = (val) -> _.isObject(val) and _.isEmpty(val)
 exports._.now           = -> new Date().toISOString()
 exports._.lpad          = (val, length = 10, char = '0') ->
-  val = val.toString()
-  val = char + val while val.length < length
-  val
+  val = val.toString().split("")
+  val.unshift char while val.length < length
+  val.join ''
 
 #
 # catch all the junk

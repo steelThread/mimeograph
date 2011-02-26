@@ -124,7 +124,8 @@ class Recognizer extends Job
         return @fail "tesseract exit(#{code})" if code isnt 0
         fs.readFile "#{target}.txt", (err, data) =>
           log "recognized - (#{data.length}) #{@key}"
-          @complete file: "#{target}.txt"
+          @complete text: data, file: "#{target}.txt"
+          delete data
 
 #
 # The resque jobs
@@ -182,11 +183,17 @@ class Mimeograph
     @store result.file, 'recognize', result.id      
 
   complete: (result) ->
-    @redis.incr "mimeograh:job:#{result.id}:num_processed", (err, processed) =>
-      @redis.get "mimeograh:job:#{result.id}:num_files", (err, total) =>
-        if processed is parseInt total
-          log.warn "complete   - finished job:#{result.id}"
-          @redis.set "mimeograh:job:#{result.id}:end", _.now()
+    file = result.file
+    piece = file.substring file.lastIndexOf('-') + 1, file.indexOf '.'
+    multi = @redis.multi()
+    multi.zadd "mimeograh:job:#{result.id}:result", piece, result.text
+    multi.incr "mimeograh:job:#{result.id}:num_processed"
+    multi.get  "mimeograh:job:#{result.id}:num_files"
+    multi.exec (err, results) =>
+      [processed, total] = results[1...]
+      if processed is parseInt total
+        log.warn "complete   - finished job:#{result.id}"
+        @redis.set "mimeograh:job:#{result.id}:end", _.now()
     
   enqueue: (job, key, id) =>
     @resque.enqueue 'mimeograph', job, [{key: key, id: id}]
