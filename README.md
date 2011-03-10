@@ -40,10 +40,6 @@ and tesseract.
 	eg.  mimeograph -r test/test.pdf
 	     mimeograph -w 10 -s
 
-## Dependencies
-Most node module dependencies will be fetched for you with the link target.  However 
-coffee-resque has yet to be bumped in the npm registry.
-
 ## License
 
 MIT License
