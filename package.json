@@ -18,8 +18,8 @@
   "dependencies": {
     "underscore":    ">= 1.1.4",
     "colors":        ">= 0.3.0",
-    "coffee-resque": ">= 0.1.0",
-    "redisfs":       ">= 0.1.0"
+    "coffee-resque": ">= 0.1.2",
+    "redisfs":       ">= 0.1.1"
   },
   "engines": { "node": ">= 0.4.0" }
 }

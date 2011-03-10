@@ -1,4 +1,5 @@
-exports.version = '0.1.0'
+mimeograph = exports
+mimeograph.version = '0.1.0'
 
 #
 # Dependencies
@@ -27,12 +28,12 @@ GLOBAL.redis2file = _.bind redisfs.redis2file, redisfs
 # Base class for mimeograph jobs.
 #
 class Job
-  constructor: (@context, @callback) -> 
+  constructor: (@context, @callback) ->
     @key = @context.key
-  
-  complete: (result) -> 
-    @callback _.extend @context, result   
-  
+
+  complete: (result) ->
+    @callback _.extend @context, result
+
   fail: (err) ->
     @callback if _.isString err then new Error err else err
 
@@ -56,10 +57,9 @@ class Extractor extends Job
       proc.on 'exit', (code) =>
         return @fail "gs exit(#{code})" if code isnt 0
         @complete text: @text.toString().trim()
-        delete @text
 
 #
-# Copy a file from redis to the filesystem.  The file is 
+# Copy a file from redis to the filesystem.  The file is
 # split into individual .jpg files using gs.
 #
 # callback receives an array of all the split file paths
@@ -106,7 +106,7 @@ class Converter extends Job
       target = "#{file.substr 0, file.indexOf '.'}.tif"
       proc = spawn 'convert', ["-quiet", file, target]
       proc.on 'exit', (code) =>
-        return @fail "convert exit(#{code})" unless code is 0
+        return @fail "convert exit(#{code})" if code isnt 0
         @complete file: target
 
 #
@@ -125,7 +125,6 @@ class Recognizer extends Job
         fs.readFile "#{target}.txt", (err, data) =>
           log "recognized - (#{data.length}) #{@key}"
           @complete text: data, file: "#{target}.txt"
-          delete data
 
 #
 # The resque jobs
@@ -139,7 +138,7 @@ jobs =
 #
 # Manages the process.
 #
-class Mimeograph 
+class Mimeograph
   constructor: (count = 5, @redis = redisfs.redis, @workers = []) ->
     @resque = resque.connect
       namespace: 'resque:mimeograph'
@@ -168,25 +167,24 @@ class Mimeograph
       when 'recognize' then @complete result
 
   split: (result) ->
-    if _.isEmpty result.text 
+    if _.isEmpty result.text
       @enqueue 'split', result.key, result.id
     else
       @redis.set "mimeograh:job:#{id}:result", result.text
-      delete result.text
       @redis.del result.key
-    
+
   convert: (result) ->
     @redis.set "mimeograh:job:#{result.id}:num_files", result.pieces.length
     @store file, 'convert', result.id for file in result.pieces
 
   recognize: (result) ->
-    @store result.file, 'recognize', result.id      
+    @store result.file, 'recognize', result.id
 
   complete: (result) ->
     file = result.file
-    piece = file.substring file.lastIndexOf('-') + 1, file.indexOf '.'
+    page = file.substring file.lastIndexOf('-') + 1, file.indexOf '.'
     multi = @redis.multi()
-    multi.zadd "mimeograh:job:#{result.id}:result", piece, result.text
+    multi.zadd "mimeograh:job:#{result.id}:result", page, result.text
     multi.incr "mimeograh:job:#{result.id}:num_processed"
     multi.get  "mimeograh:job:#{result.id}:num_files"
     multi.exec (err, results) =>
@@ -194,7 +192,7 @@ class Mimeograph
       if processed is parseInt total
         log.warn "complete   - finished job:#{result.id}"
         @redis.set "mimeograh:job:#{result.id}:end", _.now()
-    
+
   enqueue: (job, key, id) =>
     @resque.enqueue 'mimeograph', job, [{key: key, id: id}]
 
@@ -219,6 +217,5 @@ class Mimeograph
 #
 #  exports
 #
-mimeograph = exports
-mimeograph.start   = (count = 5)-> new Mimeograph(count).start()
 mimeograph.process = (filename) -> new Mimeograph().process filename
+mimeograph.start   = (workers = 5) -> new Mimeograph(workers).start()
