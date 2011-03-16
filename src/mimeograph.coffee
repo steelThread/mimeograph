@@ -104,36 +104,48 @@ class Converter extends Job
     redis2file @key, file: @key, (err, file) =>
       return @fail err if err?
       target = "#{file.substr 0, file.indexOf '.'}.tif"
-      proc = spawn 'convert', ["-quiet", file, target]
+      proc = spawn 'convert', ['-quiet', file, target]
       proc.on 'exit', (code) =>
         return @fail "convert exit(#{code})" if code isnt 0
         @complete file: target
 
 #
-# OCR the tiff file and generate a text file for the result.
+# ocr or hocr the tif file and generate a text or markup file for the result.
 #
 # callback receives the path the to text file.
 #
 class Recognizer extends Job
+  constructor: (@context, @callback, @ocr = true) ->
+    super @context, @callback
+    @suffix = if @ocr then 'tif' else 'txt'
+
   recognize: ->
-    redis2file @key, file: @key, (err, file) =>
+    redis2file @key, file: @key, deleteKey: false, (err, file) =>
       return @fail err if err?
       target = file.substr 0, file.indexOf '.'
       proc = spawn 'tesseract', [file, target]
       proc.on 'exit', (code) =>
         return @fail "tesseract exit(#{code})" if code isnt 0
-        fs.readFile "#{target}.txt", (err, data) =>
+        fs.readFile "#{target}.#{@suffix}", (err, data) =>
           log "recognized - (#{data.length}) #{@key}"
-          @complete text: data, file: "#{target}.txt"
+          @complete text: data, file: "#{target}.#{@suffix}"
+
+# class PageGenerator
+	
+# class Stitcher
 
 #
 # The resque jobs
 #
 jobs =
-  extract   : (context, callback) -> new Extractor(context, callback).extract()
-  split     : (context, callback) -> new Splitter(context, callback).split()
-  convert   : (context, callback) -> new Converter(context, callback).convert()
+  extract : (context, callback) -> new Extractor(context, callback).extract()
+  split   : (context, callback) -> new Splitter(context, callback).split()
+  convert : (context, callback) -> new Converter(context, callback).convert()
   recognize : (context, callback) -> new Recognizer(context, callback).recognize()
+#  ocr        : (context, callback) -> new Recognizer(context, callback).recognize()
+#  hocr       : (context, callback) -> new Recognizer(context, callback).recognize()
+#  pageBehind : (context, callback) -> new Recognizer(context, callback).recognize()
+#  stitch     : (context, callback) -> new Stitcher(context, callback).stitch()
 
 #
 # Manages the process.
@@ -161,10 +173,10 @@ class Mimeograph
 
   success: (worker, queue, job, result) ->
     switch job.class
-      when 'extract'   then @split result
-      when 'split'     then @convert result
-      when 'convert'   then @recognize result
-      when 'recognize' then @complete result
+      when 'extract'    then @split result
+      when 'split'      then @convert result
+      when 'convert'    then @recognize result
+      when 'recognize'  then @complete result
 
   split: (result) ->
     if _.isEmpty result.text
@@ -174,7 +186,7 @@ class Mimeograph
       @redis.del result.key
 
   convert: (result) ->
-    @redis.set "mimeograh:job:#{result.id}:num_files", result.pieces.length
+    @redis.set "mimeograh:job:#{result.id}:num_pages", result.pieces.length
     @store file, 'convert', result.id for file in result.pieces
 
   recognize: (result) ->
@@ -186,7 +198,7 @@ class Mimeograph
     multi = @redis.multi()
     multi.zadd "mimeograh:job:#{result.id}:result", page, result.text
     multi.incr "mimeograh:job:#{result.id}:num_processed"
-    multi.get  "mimeograh:job:#{result.id}:num_files"
+    multi.get  "mimeograh:job:#{result.id}:num_pages"
     multi.exec (err, results) =>
       [processed, total] = results[1...]
       if processed is parseInt total
