@@ -170,7 +170,7 @@ class Mimeograph
     if _.isEmpty result.text
       @enqueue 'split', result.key, result.id
     else
-      @redis.set "mimeograh:job:#{id}:result", result.text
+      @redis.set "mimeograh:job:#{result.id}:result", result.text
       @redis.del result.key
 
   convert: (result) ->
