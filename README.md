@@ -6,16 +6,16 @@
 			                                           .|....'                  ||               
 			                                                                   ''''              
 ## Description
-mimeograph is a simple CoffeeScript library to extract text from a PDF, OCRing where necessary.  None of the 
-actual PDF operation is performed by the CoffeeScript, everything is farmed out to pdftotext, imagemagick 
-and tesseract.
+mimeograph is a simple CoffeeScript library to extract text and create searchable pdf files, OCRing where necessary.  Each
+individual step in the process is a separate coffee-resque job allowing for interesting scaling options.
 
 ## System Requirements
 - poppler-utils (pdftotext)
 - libtiff
 - Leptonica
-- tesseract
+- tesseract v3.01 (svn trunk)
 - ImageMagick
+- Extactiamge (hocr2pdf)
 
 ## Install
 
@@ -44,7 +44,7 @@ and tesseract.
 
 MIT License
 
-Copyright (c) 2011 Jason Yankus
+Copyright (c) 2011 Sean McDaniel
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -64,6 +64,6 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
+#### Author: [Sean McDaniel]()
 #### Author: [Jason Yankus]()
-#### Contributors: [Sean McDaniel]()
 

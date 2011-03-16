@@ -38,4 +38,3 @@ puts parser.help() if options.help
 puts "v#{mimeograph.version}" if options.version
 mimeograph.start options.workers if options.start
 mimeograph.process args[0] if options.process
-  

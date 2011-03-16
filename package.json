@@ -2,7 +2,7 @@
   "name": "mimeograph",
   "version": "0.1.0",
   "description": "CoffeeScript lib for PDF OCR and text extraction.",
-  "keywords": ["node", "pdf", "ocr", "text extraction", "indexing"],
+  "keywords": ["node", "pdf", "ocr", "hocr", "coffeescript", "resque", "text extraction", "indexing"],
   "homepage": "https://github.com/morologous/mimeograph",
   "author": "Jason Yankus <jason@yankus.net>",
   "contributors": [ 

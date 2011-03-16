@@ -21,6 +21,8 @@ exports._ = _
 exports._.isObject      = (val) -> '[object Object]' is toString.apply val
 exports._.isEmptyObject = (val) -> _.isObject(val) and _.isEmpty(val)
 exports._.now           = -> new Date().toISOString()
+exports._.basename      = (file) -> file.substr 0, file.indexOf '.'
+exports._.rank          = (file) -> file.substring file.lastIndexOf('-') + 1, file.indexOf '.'
 exports._.lpad          = (val, length = 10, char = '0') ->
   val = val.toString().split("")
   val.unshift char while val.length < length
