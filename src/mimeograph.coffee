@@ -176,7 +176,7 @@ class Mimeograph
     @redis.incr 'mimeograph:job:id', (err, id) =>
       id = _.lpad id
       key = "/tmp/mimeograph-#{id}.pdf"
-      @redis.set "mimeograh:job:#{id}:start", _.now()
+      @redis.set "mimeograph:job:#{id}:start", _.now()
       file2redis file, key: key, deleteFile: false, (err, result) =>
         @enqueue 'extract', key, id
         log.warn "OK - created job:#{id} for file #{file}"
@@ -196,12 +196,12 @@ class Mimeograph
     if _.isEmpty text
       @enqueue 'split', key, id
     else
-      @redis.set "mimeograh:job:#{id}:result.text", text
+      @redis.set "mimeograph:job:#{id}:result.text", text
       @redis.del key
 
   convert: (result) ->
     {id, pieces} = result
-    @redis.set "mimeograh:job:#{id}:num_pages", pieces.length
+    @redis.set "mimeograph:job:#{id}:num_pages", pieces.length
     @store file, 'convert', id for file in pieces
 
   ocr: (result) ->
@@ -210,7 +210,7 @@ class Mimeograph
 
   hocr: (result) ->
     {id, key, file, text} = result 
-    @redis.zadd "mimeograh:job:#{id}:result.text", _.page(file), text
+    @redis.zadd "mimeograph:job:#{id}:result.text", _.page(file), text
     @enqueue 'hocr', key, id
  
   pdf: (result) ->
