@@ -6,8 +6,8 @@ mimeograph.version = '0.1.0'
 #
 fs             = require 'fs'
 resque         = require 'coffee-resque'
-{spawn}        = require 'child_process'
 {redisfs}      = require 'redisfs'
+{exec, spawn}  = require 'child_process'
 {_, log, puts} = require './utils'
 
 #
@@ -139,13 +139,22 @@ class Recognizer extends Job
 #
 class PageGenerator extends Job
   generate: ->
-    log "pdf        - #{@key}"
-    @complete {}
-    redis2file @key, {file: @key, encoding: 'utf8'}, (err, file) =>
+    log "generating #{@key}"
+    redis2file @key, {file: @key, encoding: 'utf8'}, (err, textBehind) =>
       return @fail err if err?
-              
-    
-# class Stitcher
+      img = "#{@key.substring 0, @key.indexOf '.'}.tif"
+      redis2file img, file: img, (err, file) =>
+        return @fail err if err?
+        log 'kicking off hocr2pdf'
+        pdf = "#{@key.substring 0, @key.indexOf '.'}.pdf"
+        proc = exec "hocr2pdf -i #{img} -s -o #{pdf} < #{@key}"
+        proc.on 'exit', (code) =>
+          return @fail "hocr2pdf exit(#{code})" if code isnt 0
+          log "pdf        - #{pdf}"
+          @complete file: pdf
+
+#class Stitcher extends Job
+#  stitch: ->
 
 #
 # The resque jobs
@@ -177,8 +186,8 @@ class Mimeograph
     @redis.incr 'mimeograph:job:id', (err, id) =>
       id = _.lpad id
       key = "/tmp/mimeograph-#{id}.pdf"
-      @redis.set "mimeograph:job:#{id}:start", _.now()
-      file2redis file, key: key, deleteFile: false, (err, result) =>
+      @redis.set "mimeograph:job:#{id}:started", _.now()
+      file2redis file, {key: key, deleteFile: false}, (err, result) =>
         @enqueue 'extract', key, id
         log.warn "OK - created job:#{id} for file #{file}"
         @end()
@@ -193,7 +202,7 @@ class Mimeograph
       when 'pdf'     then @complete result
 
   split: (result) ->
-    {key, id, text} = result
+    {id, key, text} = result
     if _.isEmpty text
       @enqueue 'split', key, id
     else
@@ -210,10 +219,10 @@ class Mimeograph
     @store file, 'ocr', id
 
   hocr: (result) ->
-    {id, key, file, text} = result 
+    {id, key, file, text} = result
     @redis.zadd "mimeograph:job:#{id}:result.text", _.page(file), text
     @enqueue 'hocr', key, id
- 
+
   pdf: (result) ->
     {id, file} = result
     file2redis file, {key: file, encoding: 'utf8'}, (err, result) =>
@@ -221,7 +230,8 @@ class Mimeograph
       @enqueue 'pdf', file, id
 
   complete: (result) ->
-    log 'complete   - are we done yet?'
+    {id, file} = result
+    log "complete   - #{id} : #{file}"
     # file = result.file
     # page = file.substring file.lastIndexOf('-') + 1, file.indexOf '.'
     # multi = @redis.multi()

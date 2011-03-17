@@ -14,7 +14,7 @@ and tesseract.
 - poppler-utils (pdftotext)
 - libtiff
 - Leptonica
-- tesseract v3.00
+- tesseract v3.01
 - ImageMagick
 - Extactiamge
 
