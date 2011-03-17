@@ -117,21 +117,24 @@ class Converter extends Job
 class Recognizer extends Job
   constructor: (@context, @callback, @ocr = true) ->
     super @context, @callback
-    @suffix = if @ocr then 'tif' else 'txt'
+    @suffix  = if @ocr then 'txt' else 'html'
 
   recognize: ->
     redis2file @key, file: @key, deleteKey: false, (err, file) =>
       return @fail err if err?
       target = file.substr 0, file.indexOf '.'
-      proc = spawn 'tesseract', [file, target]
+      args = [file, target]
+      args.push 'hocr' if not @ocr
+      proc = spawn 'tesseract', args
       proc.on 'exit', (code) =>
         return @fail "tesseract exit(#{code})" if code isnt 0
         fs.readFile "#{target}.#{@suffix}", (err, data) =>
-          log "recognized - (#{data.length}) #{@key}"
+          log "recognized - (ocr-#{data.length}) #{@key}" if @ocr
+          log "recognized - (hocr-#{data.length}) #{@key}" if not @ocr
           @complete text: data, file: "#{target}.#{@suffix}"
 
 # class PageGenerator
-	
+    
 # class Stitcher
 
 #
@@ -141,9 +144,8 @@ jobs =
   extract : (context, callback) -> new Extractor(context, callback).extract()
   split   : (context, callback) -> new Splitter(context, callback).split()
   convert : (context, callback) -> new Converter(context, callback).convert()
-  recognize : (context, callback) -> new Recognizer(context, callback).recognize()
-#  ocr        : (context, callback) -> new Recognizer(context, callback).recognize()
-#  hocr       : (context, callback) -> new Recognizer(context, callback).recognize()
+  ocr     : (context, callback) -> new Recognizer(context, callback).recognize()
+  hocr    : (context, callback) -> new Recognizer(context, callback, false).recognize()
 #  pageBehind : (context, callback) -> new Recognizer(context, callback).recognize()
 #  stitch     : (context, callback) -> new Stitcher(context, callback).stitch()
 
@@ -175,22 +177,33 @@ class Mimeograph
     switch job.class
       when 'extract'    then @split result
       when 'split'      then @convert result
-      when 'convert'    then @recognize result
-      when 'recognize'  then @complete result
+      when 'convert'    then @ocr result
+      when 'ocr'        then @hocr result
+      when 'hocr'       then @pageBehind result
+      # when 'pageBehind' then @complete result
 
   split: (result) ->
     if _.isEmpty result.text
       @enqueue 'split', result.key, result.id
     else
-      @redis.set "mimeograh:job:#{result.id}:result", result.text
+      @redis.set "mimeograh:job:#{result.id}:result.text", result.text
       @redis.del result.key
 
   convert: (result) ->
     @redis.set "mimeograh:job:#{result.id}:num_pages", result.pieces.length
     @store file, 'convert', result.id for file in result.pieces
 
-  recognize: (result) ->
-    @store result.file, 'recognize', result.id
+  ocr: (result) ->
+    @store result.file, 'ocr', result.id
+
+  hocr: (result) -> 
+    # store the result of the ocr
+    file = result.file
+    page = file.substring file.lastIndexOf('-') + 1, file.indexOf '.'
+    @redis.zadd "mimeograh:job:#{result.id}:result.text", page, result.text
+    @enqueue 'hocr', result.key, result.id
+
+  pageBehind: (result) -> log.warn 'page behind'
 
   complete: (result) ->
     file = result.file
