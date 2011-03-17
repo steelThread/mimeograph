@@ -141,8 +141,9 @@ class PageGenerator extends Job
   generate: ->
     log "pdf        - #{@key}"
     @complete {}
-    # redis2file @key, file: @key, deleteFile: true, (err, file) =>
-    #   return @fail err if err?        
+    redis2file @key, {file: @key, encoding: 'utf8'}, (err, file) =>
+      return @fail err if err?
+              
     
 # class Stitcher
 
@@ -154,7 +155,7 @@ jobs =
   split   : (context, callback) -> new Splitter(context, callback).split()
   convert : (context, callback) -> new Converter(context, callback).convert()
   ocr     : (context, callback) -> new Recognizer(context, callback).recognize()
-  hocr    : (context, callback) -> new Recognizer(context, callback, false).recognize()
+  hocr    : (context, callback) -> new Recognizer(context, callback, off).recognize()
   pdf     : (context, callback) -> new PageGenerator(context, callback).generate()
 #  stitch     : (context, callback) -> new Stitcher(context, callback).stitch()
 
@@ -215,7 +216,7 @@ class Mimeograph
  
   pdf: (result) ->
     {id, file} = result
-    file2redis file, key: file, encoding: 'utf8', (err, result) =>
+    file2redis file, {key: file, encoding: 'utf8'}, (err, result) =>
       return log.err "#{JSON.stringify err}" if err?
       @enqueue 'pdf', file, id
 
