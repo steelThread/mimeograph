@@ -133,7 +133,16 @@ class Recognizer extends Job
           log "recognized - (hocr-#{data.length}) #{@key}" if not @ocr
           @complete text: data, file: "#{target}.#{@suffix}"
 
-# class PageGenerator
+#
+# hocr2pdf the tif with the tesseract hocr result to produce a pdf
+# with the text behind in a separate layer
+#
+class PageGenerator extends Job
+  generate: ->
+    log "pdf        - #{@key}"
+    @complete {}
+    # redis2file @key, file: @key, deleteFile: true, (err, file) =>
+    #   return @fail err if err?        
     
 # class Stitcher
 
@@ -146,7 +155,7 @@ jobs =
   convert : (context, callback) -> new Converter(context, callback).convert()
   ocr     : (context, callback) -> new Recognizer(context, callback).recognize()
   hocr    : (context, callback) -> new Recognizer(context, callback, false).recognize()
-#  pageBehind : (context, callback) -> new Recognizer(context, callback).recognize()
+  pdf     : (context, callback) -> new PageGenerator(context, callback).generate()
 #  stitch     : (context, callback) -> new Stitcher(context, callback).stitch()
 
 #
@@ -175,48 +184,54 @@ class Mimeograph
 
   success: (worker, queue, job, result) ->
     switch job.class
-      when 'extract'    then @split result
-      when 'split'      then @convert result
-      when 'convert'    then @ocr result
-      when 'ocr'        then @hocr result
-      when 'hocr'       then @pageBehind result
-      # when 'pageBehind' then @complete result
+      when 'extract' then @split result
+      when 'split'   then @convert result
+      when 'convert' then @ocr result
+      when 'ocr'     then @hocr result
+      when 'hocr'    then @pdf result
+      when 'pdf'     then @complete result
 
   split: (result) ->
-    if _.isEmpty result.text
-      @enqueue 'split', result.key, result.id
+    {key, id, text} = result
+    if _.isEmpty text
+      @enqueue 'split', key, id
     else
-      @redis.set "mimeograh:job:#{result.id}:result.text", result.text
-      @redis.del result.key
+      @redis.set "mimeograh:job:#{id}:result.text", text
+      @redis.del key
 
   convert: (result) ->
-    @redis.set "mimeograh:job:#{result.id}:num_pages", result.pieces.length
-    @store file, 'convert', result.id for file in result.pieces
+    {id, pieces} = result
+    @redis.set "mimeograh:job:#{id}:num_pages", pieces.length
+    @store file, 'convert', id for file in pieces
 
   ocr: (result) ->
-    @store result.file, 'ocr', result.id
+    {id, file} = result
+    @store file, 'ocr', id
 
-  hocr: (result) -> 
-    # store the result of the ocr
-    file = result.file
-    page = file.substring file.lastIndexOf('-') + 1, file.indexOf '.'
-    @redis.zadd "mimeograh:job:#{result.id}:result.text", page, result.text
-    @enqueue 'hocr', result.key, result.id
-
-  pageBehind: (result) -> log.warn 'page behind'
+  hocr: (result) ->
+    {id, key, file, text} = result 
+    @redis.zadd "mimeograh:job:#{id}:result.text", _.page(file), text
+    @enqueue 'hocr', key, id
+ 
+  pdf: (result) ->
+    {id, file} = result
+    file2redis file, key: file, encoding: 'utf8', (err, result) =>
+      return log.err "#{JSON.stringify err}" if err?
+      @enqueue 'pdf', file, id
 
   complete: (result) ->
-    file = result.file
-    page = file.substring file.lastIndexOf('-') + 1, file.indexOf '.'
-    multi = @redis.multi()
-    multi.zadd "mimeograh:job:#{result.id}:result", page, result.text
-    multi.incr "mimeograh:job:#{result.id}:num_processed"
-    multi.get  "mimeograh:job:#{result.id}:num_pages"
-    multi.exec (err, results) =>
-      [processed, total] = results[1...]
-      if processed is parseInt total
-        log.warn "complete   - finished job:#{result.id}"
-        @redis.set "mimeograh:job:#{result.id}:end", _.now()
+    log 'complete   - are we done yet?'
+    # file = result.file
+    # page = file.substring file.lastIndexOf('-') + 1, file.indexOf '.'
+    # multi = @redis.multi()
+    # multi.zadd "mimeograh:job:#{result.id}:result", page, result.text
+    # multi.incr "mimeograh:job:#{result.id}:num_processed"
+    # multi.get  "mimeograh:job:#{result.id}:num_pages"
+    # multi.exec (err, results) =>
+    #   [processed, total] = results[1...]
+    #   if processed is parseInt total
+    #     log.warn "complete   - finished job:#{result.id}"
+    #     @redis.set "mimeograh:job:#{result.id}:end", _.now()
 
   enqueue: (job, key, id) =>
     @resque.enqueue 'mimeograph', job, [{key: key, id: id}]
