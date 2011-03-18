@@ -139,19 +139,18 @@ class Recognizer extends Job
 #
 class PageGenerator extends Job
   generate: ->
-    log "generating #{@key}"
     redis2file @key, {file: @key, encoding: 'utf8'}, (err, textBehind) =>
       return @fail err if err?
       img = "#{@key.substring 0, @key.indexOf '.'}.tif"
       redis2file img, file: img, (err, file) =>
         return @fail err if err?
-        log 'kicking off hocr2pdf'
         pdf = "#{@key.substring 0, @key.indexOf '.'}.pdf"
         proc = exec "hocr2pdf -i #{img} -s -o #{pdf} < #{@key}"
         proc.on 'exit', (code) =>
           return @fail "hocr2pdf exit(#{code})" if code isnt 0
-          log "pdf        - #{pdf}"
-          @complete file: pdf
+          fs.readFile pdf, (err, data) =>
+            log "pdf        - #{pdf}"
+            @complete pdf: data, file: pdf
 
 #class Stitcher extends Job
 #  stitch: ->
@@ -220,7 +219,7 @@ class Mimeograph
 
   hocr: (result) ->
     {id, key, file, text} = result
-    @redis.zadd "mimeograph:job:#{id}:result.text", _.page(file), text
+    @redis.zadd "mimeograph:job:#{id}:text", _.rank(file), text
     @enqueue 'hocr', key, id
 
   pdf: (result) ->
@@ -230,11 +229,20 @@ class Mimeograph
       @enqueue 'pdf', file, id
 
   complete: (result) ->
-    {id, file} = result
+    {id, file, pdf} = result
     log "complete   - #{id} : #{file}"
+    multi = @redis.multi()
+    multi.zadd "mimeograph:job:#{id}:pages", _.rank(file), pdf
+    multi.incr "mimeograph:job:#{id}:num_processed"
+    multi.get  "mimeograph:job:#{id}:num_pages"
+    multi.exec (err, results) =>
+      [processed, total] = results[1...]
+      if processed is parseInt total
+        log.warn "complete   - finished job:#{result.id}"
+        @redis.set "mimeograh:job:#{id}:ended", _.now()
+
     # file = result.file
     # page = file.substring file.lastIndexOf('-') + 1, file.indexOf '.'
-    # multi = @redis.multi()
     # multi.zadd "mimeograh:job:#{result.id}:result", page, result.text
     # multi.incr "mimeograh:job:#{result.id}:num_processed"
     # multi.get  "mimeograh:job:#{result.id}:num_pages"
