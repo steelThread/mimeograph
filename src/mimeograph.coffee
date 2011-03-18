@@ -19,6 +19,11 @@ redisfs = redisfs
   encoding  : 'base64'
 
 #
+# module scoped redis client instance
+#
+redis = redisfs.redis
+
+#
 # convenience
 #
 GLOBAL.file2redis = _.bind redisfs.file2redis, redisfs
@@ -153,13 +158,15 @@ class PageGenerator extends Job
             @complete pdf: data, file: pdf
 
 #
-# Stitches together the individual pages and the ocr text into a result key
-# for the job
+# Stitches together the individual pdf pages
 #
 class Stitcher extends Job
   stitch: ->
-    log "stitching - #{@key}"
-    @complete {}
+    log "stitching  - #{@key}"
+    redis.zrange @key, 0, -1, (err, results) =>
+      return @fail err if err?
+      redis.del @key
+      @complete pdf: ''
 
 #
 # The resque jobs
@@ -177,10 +184,10 @@ jobs =
 # Manages the process.
 #
 class Mimeograph
-  constructor: (count = 5, @redis = redisfs.redis, @workers = []) ->
+  constructor: (count = 5, @workers = []) ->
     @resque = resque.connect
       namespace: 'resque:mimeograph'
-      redis: @redis
+      redis: redis
     @worker i for i in [0...count]
 
   start: ->
@@ -188,10 +195,10 @@ class Mimeograph
     log.warn "Mimeograph started with #{@workers.length} workers."
 
   process: (file) ->
-    @redis.incr 'mimeograph:job:id', (err, id) =>
+    redis.incr @key('id'), (err, id) =>
       id = _.lpad id
       key = "/tmp/mimeograph-#{id}.pdf"
-      @redis.set "mimeograph:job:#{id}:started", _.now()
+      redis.set @key(id, 'started'), _.now()
       file2redis file, {key: key, deleteFile: false}, (err, result) =>
         @enqueue 'extract', key, id
         log.warn "OK - created job:#{id} for file #{file}"
@@ -212,12 +219,12 @@ class Mimeograph
     if _.isEmpty text
       @enqueue 'split', key, id
     else
-      @redis.set "mimeograph:job:#{id}:result.text", text
-      @redis.del key
+      redis.zadd @key(id, 'text'), 0, text
+      redis.del key
 
   convert: (result) ->
     {id, pieces} = result
-    @redis.set "mimeograph:job:#{id}:num_pages", pieces.length
+    redis.set @key(id, 'num_pages'), pieces.length
     @store file, 'convert', id for file in pieces
 
   ocr: (result) ->
@@ -226,7 +233,7 @@ class Mimeograph
 
   hocr: (result) ->
     {id, key, file, text} = result
-    @redis.zadd "mimeograph:job:#{id}:text", _.rank(file), text
+    redis.zadd @key(id, 'text'), _.rank(file), text
     @enqueue 'hocr', key, id
 
   pdf: (result) ->
@@ -237,23 +244,29 @@ class Mimeograph
 
   complete: (result) ->
     {id, file, pdf} = result
-    multi = @redis.multi()
-    multi.zadd "mimeograph:job:#{id}:pages", _.rank(file), pdf
-    multi.incr "mimeograph:job:#{id}:num_processed"
-    multi.get  "mimeograph:job:#{id}:num_pages"
+    multi = redis.multi()
+    multi.zadd @key(id, 'pages'), _.rank(file), pdf
+    multi.incr @key(id, 'num_processed')
+    multi.get  @key(id, 'num_pages')
     multi.exec (err, results) =>
       [processed, total] = results[1...]
-      @stitch result if processed is parseInt total
-
+      if processed is parseInt total
+        redis.del [
+          @key(id, 'num_processed')
+          @key(id, 'num_pages')
+        ]
+        @stitch result 
+  
   stitch: (result) ->
     {id} = result
-    @enqueue 'stitch', "mimeograph:job:#{id}:", id  
+    @enqueue 'stitch', @key(id, 'pages'), id  
 
   finish: (result) ->
-    {id} = result
+    {id, pdf} = result
     log.warn "finished   - finished job:#{id}"
-    # cleanup
-    @redis.set "mimeograh:job:#{id}:ended", _.now() 
+    redis.set @key(id, 'pdf'), pdf
+    redis.set @key(id, 'ended'), _.now() 
+    # notify
 
   enqueue: (job, key, id) =>
     @resque.enqueue 'mimeograph', job, [{key: key, id: id}]
@@ -268,6 +281,7 @@ class Mimeograph
 
   worker: (name) ->
     @workers.push worker = @resque.worker 'mimeograph', jobs
+    worker.name = "mimeograph:#{name}"
     worker.on 'error',   _.bind @error,   @
     worker.on 'success', _.bind @success, @
     worker
@@ -275,6 +289,10 @@ class Mimeograph
   end: ->
     worker.end() for worker in @workers
     if @resque? then @resque.end() else redisfs.end()
+  
+  key: (args...) ->
+    args.unshift "mimeograph:job"
+    args.join ':'
 
 #
 #  exports
