@@ -130,7 +130,7 @@ class Recognizer extends Job
         return @fail "tesseract exit(#{code})" if code isnt 0
         fs.readFile "#{target}.#{@suffix}", (err, data) =>
           log "recognized - (ocr-#{data.length}) #{@key}" if @ocr
-          log "recognized - (hocr-#{data.length}) #{@key}" if not @ocr
+          log "recognized - (hocr) #{@key}" if not @ocr
           @complete text: data, file: "#{target}.#{@suffix}"
 
 #
@@ -152,8 +152,14 @@ class PageGenerator extends Job
             log "pdf        - #{pdf}"
             @complete pdf: data, file: pdf
 
-#class Stitcher extends Job
-#  stitch: ->
+#
+# Stitches together the individual pages and the ocr text into a result key
+# for the job
+#
+class Stitcher extends Job
+  stitch: ->
+    log "stitching - #{@key}"
+    @complete {}
 
 #
 # The resque jobs
@@ -165,7 +171,7 @@ jobs =
   ocr     : (context, callback) -> new Recognizer(context, callback).recognize()
   hocr    : (context, callback) -> new Recognizer(context, callback, off).recognize()
   pdf     : (context, callback) -> new PageGenerator(context, callback).generate()
-#  stitch     : (context, callback) -> new Stitcher(context, callback).stitch()
+  stitch  : (context, callback) -> new Stitcher(context, callback).stitch()
 
 #
 # Manages the process.
@@ -199,6 +205,7 @@ class Mimeograph
       when 'ocr'     then @hocr result
       when 'hocr'    then @pdf result
       when 'pdf'     then @complete result
+      when 'stitch'  then @finish result
 
   split: (result) ->
     {id, key, text} = result
@@ -230,27 +237,23 @@ class Mimeograph
 
   complete: (result) ->
     {id, file, pdf} = result
-    log "complete   - #{id} : #{file}"
     multi = @redis.multi()
     multi.zadd "mimeograph:job:#{id}:pages", _.rank(file), pdf
     multi.incr "mimeograph:job:#{id}:num_processed"
     multi.get  "mimeograph:job:#{id}:num_pages"
     multi.exec (err, results) =>
       [processed, total] = results[1...]
-      if processed is parseInt total
-        log.warn "complete   - finished job:#{result.id}"
-        @redis.set "mimeograh:job:#{id}:ended", _.now()
+      @stitch result if processed is parseInt total
 
-    # file = result.file
-    # page = file.substring file.lastIndexOf('-') + 1, file.indexOf '.'
-    # multi.zadd "mimeograh:job:#{result.id}:result", page, result.text
-    # multi.incr "mimeograh:job:#{result.id}:num_processed"
-    # multi.get  "mimeograh:job:#{result.id}:num_pages"
-    # multi.exec (err, results) =>
-    #   [processed, total] = results[1...]
-    #   if processed is parseInt total
-    #     log.warn "complete   - finished job:#{result.id}"
-    #     @redis.set "mimeograh:job:#{result.id}:end", _.now()
+  stitch: (result) ->
+    {id} = result
+    @enqueue 'stitch', "mimeograph:job:#{id}:", id  
+
+  finish: (result) ->
+    {id} = result
+    log.warn "finished   - finished job:#{id}"
+    # cleanup
+    @redis.set "mimeograh:job:#{id}:ended", _.now() 
 
   enqueue: (job, key, id) =>
     @resque.enqueue 'mimeograph', job, [{key: key, id: id}]
