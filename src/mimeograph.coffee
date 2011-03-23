@@ -48,7 +48,7 @@ class Job
 class Extractor extends Job
   constructor: (@context, @callback) ->
     super @context, @callback
-  
+
   extract: ->
     redis2file @key, file: @key, deleteKey: false, (err) =>
       return @fail err if err?
@@ -57,7 +57,7 @@ class Extractor extends Job
       proc.on 'exit', (code) =>
         return @fail "pdftotext exit(#{code})" if code isnt 0
         file = "#{_.basename @key}.txt"
-        fs.readFile file, 'utf8', (err, text) => 
+        fs.readFile file, 'utf8', (err, text) =>
           fs.unlink file
           @complete text: text.trim()
 
@@ -81,9 +81,9 @@ class Splitter  extends Job
       '-dNOPAUSE'
       '-dSAFER'
       '--'
-      @key  
+      @key
     ]
- 
+
   split: ->
     redis2file @key, file: @key, (err) =>
       return @fail err if err?
@@ -187,7 +187,7 @@ class Stitcher extends Job
       return @fail err if err?
       for file in elements
         files.push path = "/tmp/mimeograph-#{@context.jobId}-#{_.lpad ++i, 4}.pdf"
-        fs.writeFileSync path, file, 'base64'    
+        fs.writeFileSync path, file, 'base64'
       callback files
 
 #
@@ -281,7 +281,8 @@ class Mimeograph
   #
   hocr: (result) ->
     {jobId, key, file, text} = result
-    redis.zadd @key(jobId, 'text'), _.rank(file), text
+    rank = _.rank file
+    redis.zadd @key(jobId, 'text'), rank, rank + text
     @enqueue 'hocr', key, jobId
 
   #
@@ -320,14 +321,23 @@ class Mimeograph
   #
   finish: (result) ->
     {jobId, file} = result
-    file2redis file, key: @key(jobId, 'pdf'), (err) =>
-      return log.err "#{JSON.stringify err}" if err?
-      redis.set @key(jobId, 'ended'), _.now()
-      log.warn "finished   - finished job:#{jobId}"
+    @set2list jobId, =>
+      file2redis file, key: @key(jobId, 'pdf'), (err) =>
+        return log.err "#{JSON.stringify err}" if err?
+        redis.set @key(jobId, 'ended'), _.now()
+        log.warn "finished   - finished job:#{jobId}"
+
+  set2list: (jobId, callback) ->
+    key = @key(jobId, 'text')
+    redis.zrange key, 0, -1, (err, pages) =>
+      multi = redis.multi()
+      multi.del key
+      multi.rpush key, page.substr 4 for page in pages
+      multi.exec (err, results) => callback()
 
   #
   # Pushes a job onto the queue.  Each job receives a context
-  # which includes the id of the job being processed and a 
+  # which includes the id of the job being processed and a
   # key which usually points to a file in redis that is
   # required by the job to carry out it's work.
   #
