@@ -46,18 +46,20 @@ class Job
 # the accumlated text found in the pdf.
 #
 class Extractor extends Job
-  constructor: (@context, @callback, @text = '') ->
+  constructor: (@context, @callback) ->
     super @context, @callback
-
+  
   extract: ->
     redis2file @key, file: @key, deleteKey: false, (err) =>
       return @fail err if err?
       log "extracting - #{@key}"
-      proc = spawn 'pdftotext', [@key, '-']
-      proc.stdout.on 'data', (data) => @text += data if data?
+      proc = spawn 'pdftotext', [@key]
       proc.on 'exit', (code) =>
         return @fail "pdftotext exit(#{code})" if code isnt 0
-        @complete text: @text.toString().trim()
+        file = "#{_.basename @key}.txt"
+        fs.readFile file, 'utf8', (err, text) => 
+          fs.unlink file
+          @complete text: text.trim()
 
 #
 # Split the pdf file into individual .jpg files using 
@@ -250,14 +252,18 @@ class Mimeograph
   # the text is set in the text key for the
   # job.
   #
-  split: (result) ->
+  split: (result, i = 0) ->
     {jobId, key, text} = result
-    if _.isEmpty text
-      @enqueue 'split', key, jobId
+    if not text.length then @enqueue 'split', key, jobId
     else
-      redis.zadd @key(jobId, 'text'), 0, text
-      redis.del key
-      @finish _.extend result, file: key
+      pages = text.split '\f'
+      pages.pop()
+      multi = redis.multi()
+      multi.del key
+      multi.rpush @key(jobId, 'text'), page for page in pages
+      multi.exec (err) =>
+        return log.err "#{JSON.stringify err}" if err?
+        @finish _.extend result, file: key
 
   #
   # Set the number of pages that came out of the
