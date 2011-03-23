@@ -159,7 +159,7 @@ class PageGenerator extends Job
 class Stitcher extends Job
   constructor: (@context, @callback) ->
     super @context, @callback
-    @file = "/tmp/mimeograph-#{@context.id}.pdf"
+    @file = "/tmp/mimeograph-#{@context.jobId}.pdf"
     @args = [
       '-q'
       '-sPAPERSIZE=letter'
@@ -183,7 +183,7 @@ class Stitcher extends Job
     redis.zrange @key, 0, -1, (err, elements) =>
       return @fail err if err?
       for file in elements
-        files.push path = "/tmp/mimeograph-#{@context.id}-#{_.lpad ++i, 4}.pdf"
+        files.push path = "/tmp/mimeograph-#{@context.jobId}-#{_.lpad ++i, 4}.pdf"
         fs.writeFileSync path, file, 'base64'    
       callback files
 
@@ -221,12 +221,12 @@ class Mimeograph
   process: (file) ->
     fs.lstatSync file
     redis.incr @key('id'), (err, id) =>
-      id  = _.lpad id
-      key = "/tmp/mimeograph-#{id}.pdf"
-      redis.set @key(id, 'started'), _.now()
+      jobId  = _.lpad id
+      key = "/tmp/mimeograph-#{jobId}.pdf"
+      redis.set @key(jobId, 'started'), _.now()
       file2redis file, {key: key, deleteFile: false}, (err) =>
-        @enqueue 'extract', key, id
-        log.warn "OK - created job:#{id} for file #{file}"
+        @enqueue 'extract', key, jobId
+        log.warn "OK - created job:#{jobId} for file #{file}"
         @end()
 
   #
@@ -250,11 +250,11 @@ class Mimeograph
   # job.
   #
   split: (result) ->
-    {id, key, text} = result
+    {jobId, key, text} = result
     if _.isEmpty text
-      @enqueue 'split', key, id
+      @enqueue 'split', key, jobId
     else
-      redis.zadd @key(id, 'text'), 0, text
+      redis.zadd @key(jobId, 'text'), 0, text
       redis.del key
 
   #
@@ -263,28 +263,28 @@ class Mimeograph
   # the file in redis and schedule an ocr job.
   #
   ocr: (result) ->
-    {id, pages} = result
-    redis.set @key(id, 'num_pages'), pages.length
-    @store page, 'ocr', id for page in pages
+    {jobId, pages} = result
+    redis.set @key(jobId, 'num_pages'), pages.length
+    @storeAndEnqueue page, 'ocr', jobId for page in pages
 
   #
   # Store the result of the ocr into a redis sorted
   # set at the job's text key ans schedule an hocr job.
   #
   hocr: (result) ->
-    {id, key, file, text} = result
-    redis.zadd @key(id, 'text'), _.rank(file), text
-    @enqueue 'hocr', key, id
+    {jobId, key, file, text} = result
+    redis.zadd @key(jobId, 'text'), _.rank(file), text
+    @enqueue 'hocr', key, jobId
 
   #
   # Store the hocr result in redis and schedule a pdf
   # job.
   #
   pdf: (result) ->
-    {id, file} = result
+    {jobId, file} = result
     file2redis file, {key: file, encoding: 'utf8'}, (err) =>
       return log.err "#{JSON.stringify err}" if err?
-      @enqueue 'pdf', file, id
+      @enqueue 'pdf', file, jobId
 
   #
   # Store the pdf data in a redis sorted set and determine
@@ -292,18 +292,18 @@ class Mimeograph
   # schedule a stitch job
   #
   stitch: (result) ->
-    {id, file, pdf} = result
+    {jobId, file, pdf} = result
     multi = redis.multi()
-    multi.zadd @key(id, 'pages'), _.rank(file), pdf
-    multi.incr @key(id, 'num_processed')
-    multi.get  @key(id, 'num_pages')
+    multi.zadd @key(jobId, 'pages'), _.rank(file), pdf
+    multi.incr @key(jobId, 'num_processed')
+    multi.get  @key(jobId, 'num_pages')
     multi.exec (err, results) =>
       [processed, total] = results[1...]
       if processed is parseInt total
-        @enqueue 'stitch', @key(id, 'pages'), id
+        @enqueue 'stitch', @key(jobId, 'pages'), jobId
         redis.del [
-          @key(id, 'num_processed')
-          @key(id, 'num_pages')
+          @key jobId, 'num_processed'
+          @key jobId, 'num_pages'
         ]
 
   #
@@ -313,11 +313,11 @@ class Mimeograph
   #        and ready to be further processed.
   #
   finish: (result) ->
-    {id, file} = result
-    file2redis file, key: @key(id, 'pdf'), (err, result) =>
+    {jobId, file} = result
+    file2redis file, key: @key(jobId, 'pdf'), (err) =>
       return log.err "#{JSON.stringify err}" if err?
-      redis.set @key(id, 'ended'), _.now()
-      log.warn "finished   - finished job:#{id}"
+      redis.set @key(jobId, 'ended'), _.now()
+      log.warn "finished   - finished job:#{jobId}"
 
   #
   # Pushes a job onto the queue.  Each job receives a context
@@ -325,16 +325,16 @@ class Mimeograph
   # key which usually points to a file in redis required
   # by the job to carry out it's work.
   #
-  enqueue: (job, key, id) =>
-    @resque.enqueue 'mimeograph', job, [{key: key, id: id}]
+  enqueue: (job, key, jobId) =>
+    @resque.enqueue 'mimeograph', job, [{key: key, jobId: jobId}]
 
   #
   # Store a file in redis and schedule a job.
   #
-  store: (file, job, id) ->
-    file2redis file, key: file, (err, result) =>
+  storeAndEnqueue: (file, job, jobId) ->
+    file2redis file, key: file, (err) =>
       return log.err "#{JSON.stringify err}" if err?
-      @enqueue job, file, id
+      @enqueue job, file, jobId
 
   #
   # Resque worker's error handler.  Just log the error
