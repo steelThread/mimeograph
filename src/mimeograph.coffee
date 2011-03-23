@@ -60,7 +60,7 @@ class Extractor extends Job
         @complete text: @text.toString().trim()
 
 #
-# Split the pdf file split into individual .jpg files using 
+# Split the pdf file into individual .jpg files using 
 # ghostscript.
 #
 # callback will receive a hash with a 'pages' propery 
@@ -122,7 +122,8 @@ class Recognizer extends Job
         file = "#{basename}.#{@extension}"
         fs.readFile file, (err, text) =>
           log "recognized - #{if @ocr then '(ocr)' else '(hocr)'} #{@key}"
-          fs.unlink @key if @ocr
+          fs.unlink @key
+          fs.unlink file if @ocr
           @complete text: text, file: file
 
 #
@@ -144,10 +145,10 @@ class PageGenerator extends Job
         proc = exec "hocr2pdf -i #{img} -o #{pdf} < #{@key}"
         proc.on 'exit', (code) =>
           return @fail "hocr2pdf exit(#{code})" if code isnt 0
-          fs.readFile pdf, 'base64', (err, data) =>
-            log "pdf        - #{pdf}"
+          fs.readFile pdf, 'base64', (err, content) =>
+            log "pdf gen    - #{pdf}"
             fs.unlink file for file in [img, pdf, @key]
-            @complete pdf: data, file: pdf
+            @complete page: content, file: pdf
 
 #
 # Stitch together the individual pdf pages containing the text-behind 
@@ -220,7 +221,7 @@ class Mimeograph
   #
   process: (file) ->
     fs.lstatSync file
-    redis.incr @key('id'), (err, id) =>
+    redis.incr @key('ids'), (err, id) =>
       jobId  = _.lpad id
       key = "/tmp/mimeograph-#{jobId}.pdf"
       redis.set @key(jobId, 'started'), _.now()
@@ -256,6 +257,7 @@ class Mimeograph
     else
       redis.zadd @key(jobId, 'text'), 0, text
       redis.del key
+      @finish _.extend result, file: key
 
   #
   # Set the number of pages that came out of the
@@ -282,9 +284,7 @@ class Mimeograph
   #
   pdf: (result) ->
     {jobId, file} = result
-    file2redis file, {key: file, encoding: 'utf8'}, (err) =>
-      return log.err "#{JSON.stringify err}" if err?
-      @enqueue 'pdf', file, jobId
+    @storeAndEnqueue file, 'utf8', 'pdf', jobId
 
   #
   # Store the pdf data in a redis sorted set and determine
@@ -292,9 +292,9 @@ class Mimeograph
   # schedule a stitch job
   #
   stitch: (result) ->
-    {jobId, file, pdf} = result
+    {jobId, file, page} = result
     multi = redis.multi()
-    multi.zadd @key(jobId, 'pages'), _.rank(file), pdf
+    multi.zadd @key(jobId, 'pages'), _.rank(file), page
     multi.incr @key(jobId, 'num_processed')
     multi.get  @key(jobId, 'num_pages')
     multi.exec (err, results) =>
@@ -322,17 +322,22 @@ class Mimeograph
   #
   # Pushes a job onto the queue.  Each job receives a context
   # which includes the id of the job being processed and a 
-  # key which usually points to a file in redis required
-  # by the job to carry out it's work.
+  # key which usually points to a file in redis that is
+  # required by the job to carry out it's work.
   #
-  enqueue: (job, key, jobId) =>
-    @resque.enqueue 'mimeograph', job, [{key: key, jobId: jobId}]
+  enqueue: (job, key, jobId) ->
+    @resque.enqueue 'mimeograph', job, [
+      key   : key
+      jobId : jobId
+    ]
 
   #
   # Store a file in redis and schedule a job.
   #
-  storeAndEnqueue: (file, job, jobId) ->
-    file2redis file, key: file, (err) =>
+  storeAndEnqueue: (file, encoding..., job, jobId) ->
+    options = key: file
+    options.encoding = encoding.shift() unless _.isEmpty encoding
+    file2redis file, options, (err) =>
       return log.err "#{JSON.stringify err}" if err?
       @enqueue job, file, jobId
 
