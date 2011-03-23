@@ -239,12 +239,12 @@ class Mimeograph
       when 'split'   then @ocr result
       when 'ocr'     then @hocr result
       when 'hocr'    then @pdf result
-      when 'pdf'     then @complete result
+      when 'pdf'     then @stitch result
       when 'stitch'  then @finish result
 
   #
-  # Schedule a split job if ocr is required, ie 
-  # the extract step didn't produce any text.
+  # Schedule a split job if ocr is required, 
+  # ie the extract step didn't produce any text.
   # If ocr isn't required job is finished and
   # the text is set in the text key for the
   # job.
@@ -291,7 +291,7 @@ class Mimeograph
   # if all the pages have been created at which point
   # schedule a stitch job
   #
-  complete: (result) ->
+  stitch: (result) ->
     {id, file, pdf} = result
     multi = redis.multi()
     multi.zadd @key(id, 'pages'), _.rank(file), pdf
@@ -300,18 +300,11 @@ class Mimeograph
     multi.exec (err, results) =>
       [processed, total] = results[1...]
       if processed is parseInt total
+        @enqueue 'stitch', @key(id, 'pages'), id
         redis.del [
           @key(id, 'num_processed')
           @key(id, 'num_pages')
         ]
-        @stitch result
-
-  #
-  # Schedule a stitch job.
-  #
-  stitch: (result) ->
-    {id} = result
-    @enqueue 'stitch', @key(id, 'pages'), id
 
   #
   # Store the resulting pdf in the job's pdf key.
@@ -350,7 +343,7 @@ class Mimeograph
     log.err "Error processing job #{JSON.stringify job}.  #{JSON.stringify error}"
 
   #
-  # Construct the resque workers that carry out the jobs.
+  # Construct the named resque workers that carry out the jobs.
   #
   worker: (name) ->
     @workers.push worker = @resque.worker 'mimeograph', jobs
