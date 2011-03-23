@@ -281,8 +281,7 @@ class Mimeograph
   #
   hocr: (result) ->
     {jobId, key, file, text} = result
-    rank = _.rank file
-    redis.zadd @key(jobId, 'text'), rank, rank + text
+    redis.hset @key(jobId, 'text'), _.rank(file), text
     @enqueue 'hocr', key, jobId
 
   #
@@ -321,18 +320,18 @@ class Mimeograph
   #
   finish: (result) ->
     {jobId, file} = result
-    @set2list jobId, =>
+    @hash2list jobId, =>
       file2redis file, key: @key(jobId, 'pdf'), (err) =>
         return log.err "#{JSON.stringify err}" if err?
         redis.set @key(jobId, 'ended'), _.now()
         log.warn "finished   - finished job:#{jobId}"
 
-  set2list: (jobId, callback) ->
-    key = @key(jobId, 'text')
-    redis.zrange key, 0, -1, (err, pages) =>
+  hash2list: (jobId, callback) ->
+    key = @key jobId, 'text'
+    redis.hgetall key, (err, obj) =>
       multi = redis.multi()
       multi.del key
-      multi.rpush key, page.substr 4 for page in pages
+      multi.rpush key, obj[field] for field in _.keys(obj).sort()
       multi.exec (err, results) => callback()
 
   #
