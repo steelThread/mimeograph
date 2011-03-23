@@ -183,7 +183,7 @@ class Stitcher extends Job
         @complete file: @file
 
   fetch: (callback, i = 0, files = []) ->
-    redis.zrange @key, 0, -1, (err, elements) =>
+    redis.lrange @key, 0, -1, (err, elements) =>
       return @fail err if err?
       for file in elements
         files.push path = "/tmp/mimeograph-#{@context.jobId}-#{_.lpad ++i, 4}.pdf"
@@ -216,7 +216,7 @@ class Mimeograph
   #
   start: ->
     worker.start() for worker in @workers
-    log.warn "Mimeograph started with #{@workers.length} workers."
+    log.warn "OK - mimeograph started with #{@workers.length} workers."
 
   #
   # Kick off a new pdf file processing job.
@@ -281,7 +281,7 @@ class Mimeograph
   #
   hocr: (result) ->
     {jobId, key, file, text} = result
-    redis.hset @key(jobId, 'text'), _.rank(file), text
+    redis.hset @key(jobId, 'text'), _.pageNumber(file), text
     @enqueue 'hocr', key, jobId
 
   #
@@ -300,17 +300,18 @@ class Mimeograph
   stitch: (result) ->
     {jobId, file, page} = result
     multi = redis.multi()
-    multi.zadd @key(jobId, 'pages'), _.rank(file), page
+    multi.hset @key(jobId, 'pages'), _.pageNumber(file), page
     multi.incr @key(jobId, 'num_processed')
     multi.get  @key(jobId, 'num_pages')
     multi.exec (err, results) =>
       [processed, total] = results[1...]
       if processed is parseInt total
-        @enqueue 'stitch', @key(jobId, 'pages'), jobId
-        redis.del [
-          @key jobId, 'num_processed'
-          @key jobId, 'num_pages'
-        ]
+        @hash2list jobId, 'pages', =>
+          redis.del [
+            @key jobId, 'num_processed'
+            @key jobId, 'num_pages'
+          ]
+          @enqueue 'stitch', @key(jobId, 'pages'), jobId
 
   #
   # Store the resulting pdf in the job's pdf key.
@@ -320,18 +321,23 @@ class Mimeograph
   #
   finish: (result) ->
     {jobId, file} = result
-    @hash2list jobId, =>
+    @hash2list jobId, 'text', =>
       file2redis file, key: @key(jobId, 'pdf'), (err) =>
         return log.err "#{JSON.stringify err}" if err?
         redis.set @key(jobId, 'ended'), _.now()
         log.warn "finished   - finished job:#{jobId}"
 
-  hash2list: (jobId, callback) ->
-    key = @key jobId, 'text'
-    redis.hgetall key, (err, obj) =>
+  #
+  # Moves a hash into a list.  Fetches the entire hash,
+  # sorts on the fields (page number) and pushes them
+  # into a list for the original key.
+  #
+  hash2list: (jobId, key, callback) ->
+    key = @key jobId, key
+    redis.hgetall key, (err, hash) =>
       multi = redis.multi()
       multi.del key
-      multi.rpush key, obj[field] for field in _.keys(obj).sort()
+      multi.rpush key, hash[field] for field in _.keys(hash).sort()
       multi.exec (err, results) => callback()
 
   #
