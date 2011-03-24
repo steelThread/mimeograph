@@ -54,7 +54,7 @@ class Extractor extends Job
 
   extract: ->
     proc = spawn 'pdftotext', [@key]
-    proc.on 'exit', (code) => 
+    proc.on 'exit', (code) =>
       return @fail "pdftotext exit(#{code})" if code isnt 0
       @fetchText()
 
@@ -66,11 +66,11 @@ class Extractor extends Job
       @complete text: text.trim()
 
 #
-# Split the pdf file into individual .jpg files using 
+# Split the pdf file into individual .jpg files using
 # ghostscript.
 #
-# callback will receive a hash with a 'pages' propery 
-# containing and array of all the paths produced by 
+# callback will receive a hash with a 'pages' propery
+# containing and array of all the paths produced by
 # ghostscript.
 #
 class Splitter  extends Job
@@ -96,7 +96,7 @@ class Splitter  extends Job
 
   split: ->
     proc = spawn 'gs', @args
-    proc.on 'exit', (code) => 
+    proc.on 'exit', (code) =>
       return @fail "gs exit(#{code})" if code isnt 0
       @fetchPages()
 
@@ -126,7 +126,7 @@ class Recognizer extends Job
 
   perform: ->
     log "recognizing - #{if @ocr then '(ocr)' else '(hocr)'} #{@key}"
-    redis2file @key, {file: @key, deleteKey: false}, (err) =>
+    redis2file @key, file: @key, deleteKey: false, (err) =>
       return @fail err if err?
       @recognize()
 
@@ -134,12 +134,13 @@ class Recognizer extends Job
     args = [@key, @basename]
     args.push 'hocr' unless @ocr
     proc = spawn 'tesseract', args
-    proc.on 'exit', (code) => 
+    proc.on 'exit', (code) =>
       return @fail "tesseract exit(#{code})" if code isnt 0
       @fetchText()
 
   fetchText: ->
     fs.readFile @file, (err, text) =>
+      return @fail err if err?
       fs.unlink @key
       fs.unlink @file if @ocr
       @complete text: text, file: @file
@@ -148,34 +149,35 @@ class Recognizer extends Job
 # Generate a searchable pdf page using hocr2pdf.
 #
 # callback will receive a hash with a 'pdf' field containing
-# the base64 encoded contents of the resulting pdf file and a 
+# the base64 encoded contents of the resulting pdf file and a
 # 'file' field containing the path to the result.
 #
 class PageGenerator extends Job
   constructor: (@context, @callback) ->
     super @context, @callback
     @basename = _.basename @key
-    @img = "#{@basename}.jpg"
-    @pdf = "#{@basename}.pdf"
-  
+    @img  = "#{@basename}.jpg"
+    @page = "#{@basename}.pdf"
+
   perform: ->
-    log "generating  - #{@pdf}"
-    redis2file @key, {file: @key, encoding: 'utf8'}, (err) =>
+    log "generating  - #{@page}"
+    redis2file @key, file: @key, encoding: 'utf8', (err) =>
       return @fail err if err?
-      redis2file @img, file: @img, (err) => 
+      redis2file @img, file: @img, (err) =>
         return @fail err if err?
         @generate()
 
   generate: ->
-    proc = exec "hocr2pdf -i #{@img} -o #{@pdf} < #{@key}"
-    proc.on 'exit', (code) => 
+    proc = exec "hocr2pdf -i #{@img} -o #{@page} < #{@key}"
+    proc.on 'exit', (code) =>
       return @fail "hocr2pdf exit(#{code})" if code isnt 0
       @fetchPage()
 
   fetchPage: ->
-    fs.readFile @pdf, 'base64', (err, content) =>
-      fs.unlink file for file in [@img, @pdf, @key]
-      @complete page: content, file: @pdf
+    fs.readFile @page, 'base64', (err, data) =>
+      return @fail err if err?
+      fs.unlink file for file in [@img, @page, @key]
+      @complete page: data, file: @page
 
 #
 # Stitch together the individual pdf pages containing the text-behind 
@@ -208,7 +210,7 @@ class Stitcher extends Job
       redis.del @key
       fs.unlink file for file in files
       @complete file: @pdf
-	
+
   fetchFiles: (callback, i = 0, files = []) ->
     redis.lrange @key, 0, -1, (err, elements) =>
       return @fail err if err?
@@ -251,16 +253,24 @@ class Mimeograph
   process: (file) ->
     fs.lstatSync file
     redis.incr @key('ids'), (err, id) =>
-      jobId  = _.lpad id
-      key = "/tmp/mimeograph-#{jobId}.pdf"
-      redis.set @key(jobId, 'started'), _.now()
-      file2redis file, {key: key, deleteFile: false}, (err) =>
-        @enqueue 'extract', key, jobId
-        log.warn "OK - created job:#{jobId} for file #{file}"
-        @end()
+      return @capture err if err?
+      @createJob _.lpad(id), file
 
   #
-  # Rescue worker success callback.  
+  # Creates a new mimeograph process job and
+  # schedule an extract job.
+  #
+  createJob: (jobId, file) ->
+    key = "/tmp/mimeograph-#{jobId}.pdf"
+    redis.set @key(jobId, 'started'), _.now()
+    file2redis file, key: key, deleteFile: false, (err) =>
+      return @capture err, {jobId: jobId} if err?
+      @enqueue 'extract', key, jobId
+      log.warn "OK - created job:#{jobId} for file #{file}"
+      @end()
+
+  #
+  # Rescue worker's success callback.
   # Orchestrates the job steps.
   #
   success: (worker, queue, job, result) ->
@@ -273,7 +283,7 @@ class Mimeograph
       when 'stitch'  then @finish result
 
   #
-  # Schedule a split job if ocr is required, 
+  # Schedule a split job if ocr is required,
   # ie the extract step didn't produce any text.
   # If ocr isn't required job is finished and
   # the text is set in the text key for the
@@ -289,7 +299,7 @@ class Mimeograph
       multi.del key
       multi.rpush @key(jobId, 'text'), page for page in pages
       multi.exec (err) =>
-        return log.err "#{JSON.stringify err}" if err?
+        return @capture err, result if err?
         @finish _.extend result, file: key
 
   #
@@ -299,17 +309,19 @@ class Mimeograph
   #
   ocr: (result) ->
     {jobId, pages} = result
-    redis.set @key(jobId, 'num_pages'), pages.length
-    @storeAndEnqueue page, 'ocr', jobId for page in pages
+    redis.set @key(jobId, 'num_pages'), pages.length, (err) =>
+      return @capture err, result if err?
+      @storeAndEnqueue page, 'ocr', jobId for page in pages
 
   #
-  # Store the result of the ocr into a redis hash 
-  # at the job's text key ans schedule an hocr job.
+  # Store the result of the ocr into a redis hash
+  # at the job's text key and schedule a hocr job.
   #
   hocr: (result) ->
     {jobId, key, file, text} = result
-    redis.hset @key(jobId, 'text'), _.pageNumber(file), text
-    @enqueue 'hocr', key, jobId
+    redis.hset @key(jobId, 'text'), _.pageNumber(file), text, (err) =>
+      return @capture err, result if err?
+      @enqueue 'hocr', key, jobId
 
   #
   # Store the hocr result in redis and schedule a pdf
@@ -331,14 +343,22 @@ class Mimeograph
     multi.incr @key(jobId, 'num_processed')
     multi.get  @key(jobId, 'num_pages')
     multi.exec (err, results) =>
+      return @capture err, result if err?
       [processed, total] = results[1...]
-      if processed is parseInt total
-        @hash2list jobId, 'pages', =>
-          redis.del [
-            @key jobId, 'num_processed'
-            @key jobId, 'num_pages'
-          ]
-          @enqueue 'stitch', @key(jobId, 'pages'), jobId
+      @checkComplete jobId, processed, parseInt total
+
+  #
+  # Determines if all the pages have been recreated with
+  # the text behind and if so schedule a stitch job.
+  #
+  checkComplete: (jobId, processed, total) ->
+    if processed is total then @hash2list jobId, 'pages', (err) =>
+      return @capture err, {jobId: jobId} if err?
+      @enqueue 'stitch', @key(jobId, 'pages'), jobId
+      redis.del [
+        @key jobId, 'num_processed'
+        @key jobId, 'num_pages'
+      ]
 
   #
   # Store the resulting pdf in the job's pdf key.
@@ -348,30 +368,32 @@ class Mimeograph
   #
   finish: (result) ->
     {jobId, file} = result
-    @hash2list jobId, 'text', =>
+    @hash2list jobId, 'text', (err) =>
+      return @capture err, result if err?
       file2redis file, key: @key(jobId, 'pdf'), (err) =>
-        return log.err "#{JSON.stringify err}" if err?
+        return @capture err, result if err?
         redis.set @key(jobId, 'ended'), _.now()
         log.warn "finished    - finished job:#{jobId}"
 
   #
-  # Moves a hash into a list.  Fetches the entire hash,
+  # Moves a hash to a list.  Fetches the entire hash,
   # sorts on the fields (page number) and pushes them
   # into a list for the original key.
   #
   hash2list: (jobId, key, callback) ->
     key = @key jobId, key
     redis.hgetall key, (err, hash) =>
+      return callback err, {jobId: jobId} if err?
       multi = redis.multi()
       multi.del key
       multi.rpush key, hash[field] for field in _.keys(hash).sort()
-      multi.exec (err, results) => callback()
+      multi.exec (err) => callback err
 
   #
-  # Pushes a job onto the queue.  Each job receives a 
-  # context which includes the id of the job being 
-  # processed and a key which usually points to a file 
-  # in redis that is required by the job to carry out 
+  # Pushes a job onto the queue.  Each job receives a
+  # context which includes the id of the job being
+  # processed and a key which usually points to a file
+  # in redis that is required by the job to carry out
   # it's work.
   #
   enqueue: (job, key, jobId) ->
@@ -387,7 +409,7 @@ class Mimeograph
     options = key: file
     options.encoding = encoding.shift() unless _.isEmpty encoding
     file2redis file, options, (err) =>
-      return log.err "#{JSON.stringify err}" if err?
+      return @capture err, {jobId: jobId, job: job} if err?
       @enqueue job, file, jobId
 
   #
@@ -397,7 +419,8 @@ class Mimeograph
     log.err "Error processing job #{JSON.stringify job}.  #{JSON.stringify error}"
 
   #
-  # Construct the named resque workers that carry out the jobs.
+  # Construct the named resque workers that carry out
+  # the jobs.
   #
   worker: (name) ->
     @workers.push worker = @resque.worker 'mimeograph', jobs
@@ -407,7 +430,7 @@ class Mimeograph
     worker
 
   #
-  # All done, disconnect the redis client. 
+  # All done, disconnect the redis client.
   #
   end: ->
     worker.end() for worker in @workers
@@ -419,6 +442,13 @@ class Mimeograph
   key: (args...) ->
     args.unshift "mimeograph:job"
     args.join ':'
+
+  #
+  # Log the err.
+  #
+  # todo: add the jobId here and error notification.
+  #
+  capture: (err, meta) -> log.err "#{JSON.stringify meta} #{JSON.stringify err}"
 
 #
 # exports
