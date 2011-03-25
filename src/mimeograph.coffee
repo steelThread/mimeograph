@@ -1,5 +1,5 @@
 mimeograph = exports
-mimeograph.version = '0.1.1'
+mimeograph.version = '0.1.2'
 
 #
 # Dependencies
