@@ -78,10 +78,12 @@ class Splitter  extends Job
     super @context, @callback
     @basename = _.basename @key
     @args = [
-      '-SDEVICE=jpeggray'
-      '-r300x300'
+      '-SDEVICE=pnggray'
+      '-r600x600'
       '-sPAPERSIZE=letter'
-      "-sOutputFile=#{@basename}-%04d.jpg"
+      "-sOutputFile=#{@basename}-%04d.png"
+      '-dTextAlphaBits=4'
+      '-dBATCH'
       '-dNOPAUSE'
       '-dSAFER'
       '--'
@@ -111,29 +113,27 @@ class Splitter  extends Job
     @pages.push "/tmp/#{file}" if file.match "^#{basename}-{1}"
 
 #
-# Recognize (ocr or hocr) the text from the jpg images using
+# Recognize (ocr) the text from the jpg images using
 # tesseract.
 #
 # callback will receive a hash with a 'text' field containing
-# the ocr/hocr text and a 'file' field containing the path to
+# the ocr text and a 'file' field containing the path to
 # the result.
 #
 class Recognizer extends Job
-  constructor: (@context, @callback, @ocr = true) ->
+  constructor: (@context, @callback) ->
     super @context, @callback
     @basename  = _.basename @key
-    @file      = "#{@basename}.#{if @ocr then 'txt' else 'html'}"
+    @file      = "#{@basename}.txt"
 
   perform: ->
-    log "recognizing - #{if @ocr then '(ocr)' else '(hocr)'} #{@key}"
-    redis2file @key, file: @key, deleteKey: false, (err) =>
+    log "recognizing - #{@key}"
+    redis2file @key, file: @key, (err) =>
       return @fail err if err?
       @recognize()
 
   recognize: ->
-    args = [@key, @basename]
-    args.push 'hocr' unless @ocr
-    proc = spawn 'tesseract', args
+    proc = spawn 'tesseract', [@key, @basename]
     proc.on 'exit', (code) =>
       return @fail "tesseract exit(#{code})" if code isnt 0
       @fetchText()
@@ -142,82 +142,8 @@ class Recognizer extends Job
     fs.readFile @file, (err, text) =>
       return @fail err if err?
       fs.unlink @key
-      fs.unlink @file if @ocr
-      @complete text: text, file: @file
-
-#
-# Generate a searchable pdf page using hocr2pdf.
-#
-# callback will receive a hash with a 'pdf' field containing
-# the base64 encoded contents of the resulting pdf file and a
-# 'file' field containing the path to the result.
-#
-class PageGenerator extends Job
-  constructor: (@context, @callback) ->
-    super @context, @callback
-    @basename = _.basename @key
-    @img  = "#{@basename}.jpg"
-    @page = "#{@basename}.pdf"
-
-  perform: ->
-    log "generating  - #{@page}"
-    redis2file @key, file: @key, encoding: 'utf8', (err) =>
-      return @fail err if err?
-      redis2file @img, file: @img, (err) =>
-        return @fail err if err?
-        @generate()
-
-  generate: ->
-    proc = exec "hocr2pdf -i #{@img} -o #{@page} < #{@key}"
-    proc.on 'exit', (code) =>
-      return @fail "hocr2pdf exit(#{code})" if code isnt 0
-      @fetchPage()
-
-  fetchPage: ->
-    fs.readFile @page, 'base64', (err, data) =>
-      return @fail err if err?
-      fs.unlink file for file in [@img, @page, @key]
-      @complete page: data, file: @page
-
-#
-# Stitch together the individual pdf pages containing the text-behind 
-# into a single pdf file.
-#
-# callback will receive a hash with a 'file' field containing the 
-# path to the resulting pdf.
-#
-class Stitcher extends Job
-  constructor: (@context, @callback) ->
-    super @context, @callback
-    @pdf = "/tmp/mimeograph-#{@jobId}.pdf"
-    @args = [
-      '-q'
-      '-sPAPERSIZE=letter'
-      '-dNOPAUSE'
-      '-dBATCH'
-      '-SDEVICE=pdfwrite'
-      "-sOutputFile=#{@pdf}"
-    ]
-
-  perform: ->
-    log "stitching   - #{@key}"
-    @fetchFiles (files) => @stitch files
-
-  stitch: (files) ->
-    proc = spawn 'gs', @args.concat files
-    proc.on 'exit', (code) =>
-      return @fail "stitch exit(#{code})" if code isnt 0
-      redis.del @key
-      fs.unlink file for file in files
-      @complete file: @pdf
-
-  fetchFiles: (callback, i = 0, files = []) ->
-    redis.lrange @key, 0, -1, (err, elements) =>
-      return @fail err if err?
-      for file in elements
-        files.push path = "/tmp/mimeograph-#{@jobId}-#{_.lpad ++i, 4}.pdf"
-        fs.writeFileSync path, file, 'base64'
-      callback files
+      fs.unlink @file
+      @complete text: text, pageNumber: _.pageNumber @file
 
 #
 # The resque jobs.
@@ -226,15 +152,12 @@ jobs =
   extract : (context, callback) -> new Extractor(context, callback).perform()
   split   : (context, callback) -> new Splitter(context, callback).perform()
   ocr     : (context, callback) -> new Recognizer(context, callback).perform()
-  hocr    : (context, callback) -> new Recognizer(context, callback, off).perform()
-  pdf     : (context, callback) -> new PageGenerator(context, callback).perform()
-  stitch  : (context, callback) -> new Stitcher(context, callback).perform()
 
 #
 # Manages the process.
 #
 class Mimeograph
-  constructor: (count = 5, @workers = []) ->
+  constructor: (count, @workers = []) ->
     @resque = resque.connect
       redis     : redis
       namespace : 'resque:mimeograph'
@@ -262,7 +185,7 @@ class Mimeograph
   #
   createJob: (jobId, file) ->
     key = "/tmp/mimeograph-#{jobId}.pdf"
-    redis.set @key(jobId, 'started'), _.now()
+    redis.hset @key(jobId), 'started', _.now()
     file2redis file, key: key, deleteFile: false, (err) =>
       return @capture err, {jobId: jobId} if err?
       @enqueue 'extract', key, jobId
@@ -277,10 +200,7 @@ class Mimeograph
     switch job.class
       when 'extract' then @split result
       when 'split'   then @ocr result
-      when 'ocr'     then @hocr result
-      when 'hocr'    then @pdf result
-      when 'pdf'     then @stitch result
-      when 'stitch'  then @finish result
+      when 'ocr'     then @finish result
 
   #
   # Schedule a split job if ocr is required,
@@ -289,7 +209,7 @@ class Mimeograph
   # the text is set in the text key for the
   # job.
   #
-  split: (result, i = 0) ->
+  split: (result) ->
     {jobId, key, text} = result
     if not text.length then @enqueue 'split', key, jobId
     else
@@ -297,10 +217,10 @@ class Mimeograph
       pages.pop()
       multi = redis.multi()
       multi.del key
-      multi.rpush @key(jobId, 'text'), page for page in pages
+      multi.hset @key(jobId), 'text', pages.join '\f'
       multi.exec (err) =>
         return @capture err, result if err?
-        @finish _.extend result, file: key
+        @finalize jobId
 
   #
   # Set the number of pages that came out of the
@@ -309,84 +229,53 @@ class Mimeograph
   #
   ocr: (result) ->
     {jobId, pages} = result
-    redis.set @key(jobId, 'num_pages'), pages.length, (err) =>
+    redis.hset @key(jobId), 'num_pages', pages.length, (err) =>
       return @capture err, result if err?
       @storeAndEnqueue page, 'ocr', jobId for page in pages
 
   #
-  # Store the result of the ocr into a redis hash
-  # at the job's text key and schedule a hocr job.
+  # Store the ocr data in a redis hash and determine
+  # if all the pages have been recognized at which point
+  # finish.
   #
-  hocr: (result) ->
-    {jobId, key, file, text} = result
-    redis.hset @key(jobId, 'text'), _.pageNumber(file), text, (err) =>
-      return @capture err, result if err?
-      @enqueue 'hocr', key, jobId
-
-  #
-  # Store the hocr result in redis and schedule a pdf
-  # job.
-  #
-  pdf: (result) ->
-    {jobId, file} = result
-    @storeAndEnqueue file, 'utf8', 'pdf', jobId
-
-  #
-  # Store the pdf data in a redis hash and determine
-  # if all the pages have been created at which point
-  # schedule a stitch job
-  #
-  stitch: (result) ->
-    {jobId, file, page} = result
+  finish: (result) ->
+    {jobId, pageNumber, text} = result
     multi = redis.multi()
-    multi.hset @key(jobId, 'pages'), _.pageNumber(file), page
-    multi.incr @key(jobId, 'num_processed')
-    multi.get  @key(jobId, 'num_pages')
+    multi.hset    @key(jobId, 'text'), pageNumber, text, (err) =>
+    multi.hincrby @key(jobId), 'num_processed', 1
+    multi.hget    @key(jobId), 'num_pages'
     multi.exec (err, results) =>
       return @capture err, result if err?
       [processed, total] = results[1...]
-      @checkComplete jobId, processed, parseInt total
+      @finalize jobId if processed is parseInt total
 
   #
-  # Determines if all the pages have been recreated with
-  # the text behind and if so schedule a stitch job.
+  # Wrap up the job.  
   #
-  checkComplete: (jobId, processed, total) ->
-    if processed is total then @hash2list jobId, 'pages', (err) =>
-      return @capture err, {jobId: jobId} if err?
-      @enqueue 'stitch', @key(jobId, 'pages'), jobId
-      redis.del [
-        @key jobId, 'num_processed'
-        @key jobId, 'num_pages'
-      ]
-
-  #
-  # Store the resulting pdf in the job's pdf key.
-  #
-  # todo:  notify via pub/sub that the job is complete
-  #        and ready to be further processed.
-  #
-  finish: (result) ->
-    {jobId, file} = result
-    @hash2list jobId, 'text', (err) =>
+  finalize: (jobId) ->
+    @hash2key jobId, (err) =>
       return @capture err, result if err?
-      file2redis file, key: @key(jobId, 'pdf'), (err) =>
+      multi = redis.multi()
+      multi.hset @key(jobId), 'ended', _.now()
+      multi.hdel @key(jobId), 'num_processed'
+      multi.hdel @key(jobId), 'num_pages'
+      multi.exec (err, results) =>
         return @capture err, result if err?
-        redis.set @key(jobId, 'ended'), _.now()
         log.warn "finished    - finished job:#{jobId}"
 
   #
-  # Moves a hash to a list.  Fetches the entire hash,
+  # Moves a hash to a key.  Fetches the entire hash,
   # sorts on the fields (page number) and pushes them
-  # into a list for the original key.
+  # into a key into the job's hashs.
   #
-  hash2list: (jobId, key, callback) ->
-    key = @key jobId, key
+  hash2key: (jobId, callback, pages = []) ->
+    key = @key jobId, 'text'
     redis.hgetall key, (err, hash) =>
       return callback err, {jobId: jobId} if err?
+      pages.push hash[field] for field in _.keys(hash).sort()
       multi = redis.multi()
       multi.del key
-      multi.rpush key, hash[field] for field in _.keys(hash).sort()
+      multi.hset @key(jobId), 'text', pages.join '\f'
       multi.exec (err) => callback err
 
   #
@@ -453,5 +342,5 @@ class Mimeograph
 #
 # exports
 #
-mimeograph.process = (filename)    -> new Mimeograph().process filename
+mimeograph.process = (file)        -> new Mimeograph().process file
 mimeograph.start   = (workers = 5) -> new Mimeograph(workers).start()
