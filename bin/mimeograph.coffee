@@ -12,7 +12,7 @@ require.extensions['.coffee'] = (module, filename) ->
 
 usage = '''
   Usage:
-    mimeograph [OPTIONS] filename
+    mimeograph [OPTIONS] [ID] filename
 '''
 
 switches = [
@@ -37,4 +37,4 @@ if args.length is 0 and argv.length is 0
 puts parser.help() if options.help
 puts "v#{mimeograph.version}" if options.version
 mimeograph.start options.workers if options.start
-mimeograph.process args[0] if options.process
+mimeograph.process args if options.process

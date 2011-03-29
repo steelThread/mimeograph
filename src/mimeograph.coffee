@@ -128,16 +128,21 @@ class Recognizer extends Job
     @file      = "#{@basename}.txt"
 
   perform: ->
-    log "recognizing - #{@key}"
     redis2file @key, file: @key, (err) =>
       return @fail err if err?
       @recognize()
 
   recognize: ->
-    proc = spawn 'tesseract', [@key, @basename]
-    proc.on 'exit', (code) =>
-      return @fail "tesseract exit(#{code})" if code isnt 0
-      @fetchText()
+    status @jobId, (status) =>
+      if status is 'fail' 
+        fs.unlink @key
+        @complete()
+      else
+        log "recognizing - #{@key}"
+        proc = spawn 'tesseract', [@key, @basename]
+        proc.on 'exit', (code) =>
+          return @fail "tesseract exit(#{code})" if code isnt 0
+          @fetchText()
 
   fetchText: ->
     fs.readFile @file, (err, text) =>
@@ -153,6 +158,20 @@ jobs =
   extract : (context, callback) -> new Extractor(context, callback).perform()
   split   : (context, callback) -> new Splitter(context, callback).perform()
   ocr     : (context, callback) -> new Recognizer(context, callback).perform()
+
+#
+# Namespace util for redis key gen.
+#
+genkey = (args...) ->
+  args.unshift "mimeograph:job"
+  args.join ':'
+
+#
+# Get a jobs status
+#
+status = (jobId, callback) ->
+  redis.hget genkey(jobId), 'status', (err, status) => 
+    callback status
 
 #
 # Manages the process.
@@ -174,11 +193,13 @@ class Mimeograph
   #
   # Kick off a new job.
   #
-  process: (file) ->
+  process: (id, file) ->
     fs.lstatSync file
-    redis.incr @key('ids'), (err, id) =>
-      return @capture err if err?
-      @createJob _.lpad(id), file
+    if id? then @createJob id, file 
+    else 
+      redis.incr genkey('ids'), (err, id) =>
+        return @capture err if err?
+        @createJob _.lpad(id), file
 
   #
   # Creates a new mimeograph process job and
@@ -186,7 +207,7 @@ class Mimeograph
   #
   createJob: (jobId, file) ->
     key = "/tmp/mimeograph-#{jobId}.pdf"
-    redis.hset @key(jobId), 'started', _.now()
+    redis.hset genkey(jobId), 'started', _.now()
     file2redis file, key: key, deleteFile: false, (err) =>
       return @capture err, {jobId: jobId} if err?
       @enqueue 'extract', key, jobId
@@ -216,7 +237,7 @@ class Mimeograph
     else
       multi = redis.multi()
       multi.del  key
-      multi.hset @key(jobId), 'text', text
+      multi.hset genkey(jobId), 'text', text
       multi.exec (err, result) =>
         return @capture err, result if err?
         @finalize jobId
@@ -228,7 +249,7 @@ class Mimeograph
   #
   ocr: (result) ->
     {jobId, pages} = result
-    redis.hset @key(jobId), 'num_pages', pages.length, (err) =>
+    redis.hset genkey(jobId), 'num_pages', pages.length, (err) =>
       return @capture err, result if err?
       @storeAndEnqueue page, 'ocr', jobId for page in pages
 
@@ -239,29 +260,43 @@ class Mimeograph
   #
   finish: (result) ->
     {jobId, pageNumber, text} = result
-    multi = redis.multi()
-    multi.hset    @key(jobId, 'text'), pageNumber, text
-    multi.hincrby @key(jobId), 'num_processed', 1
-    multi.hget    @key(jobId), 'num_pages'
-    multi.exec (err, results) =>
-      return @capture err, result if err?
-      [processed, total] = results[1...]
-      if processed is parseInt total
-        @hash2key jobId, (err) =>
-          return @capture err, result if err?
-          @finalize jobId 
+    @proceed jobId, =>
+      multi = redis.multi()
+      multi.hset    genkey(jobId, 'text'), pageNumber, text
+      multi.hincrby genkey(jobId), 'num_processed', 1
+      multi.hget    genkey(jobId), 'num_pages'
+      multi.exec (err, results) =>
+        return @capture err, result if err?
+        [processed, total] = results[1...]
+        if processed is parseInt total
+          @hash2key jobId, (err) =>
+            return @capture err, result if err?
+            @finalize jobId
 
   #
-  # Wrap up the job.  
+  # Wrap up the job and publish a notification
   #
   finalize: (jobId) ->
+    job = genkey jobId
     multi = redis.multi()
-    multi.hset @key(jobId), 'ended', _.now()
-    multi.hdel @key(jobId), 'num_processed'
-    multi.hdel @key(jobId), 'num_pages'
+    multi.hset job, 'ended', _.now()
+    multi.hset job, 'status', 'success'
+    multi.hdel job, 'num_processed'
     multi.exec (err, results) =>
       return @capture err, result if err?
-      log.warn "finished    - finished job:#{jobId}"
+      log.warn "finished    - #{job}"
+      @notify job
+
+  #
+  # Attempt to notify clients about job completness.  
+  # In the event where there were no subscribers
+  # add the job to the completed set.  Sort of a poor
+  # mans durability solution.
+  #
+  notify: (job, status = 'success') -> 
+    redis.publish job, "#{job}:#{status}", (err, subscribers) =>
+      return @capture err, result if err?
+      redis.sadd genkey('completed'), job  unless subscribers         
 
   #
   # Moves a hash to a key.  Fetches the entire hash,
@@ -269,13 +304,13 @@ class Mimeograph
   # into a key into the job's hashs.
   #
   hash2key: (jobId, callback, pages = []) ->
-    key = @key jobId, 'text'
+    key = genkey jobId, 'text'
     redis.hgetall key, (err, hash) =>
       return callback err, {jobId: jobId} if err?
       pages.push hash[field] for field in _.keys(hash).sort()
       multi = redis.multi()
       multi.del key
-      multi.hset @key(jobId), 'text', pages.join '\f'
+      multi.hset genkey(jobId), 'text', pages.join '\f'
       multi.exec (err) => callback err
 
   #
@@ -302,10 +337,21 @@ class Mimeograph
       @enqueue job, file, jobId
 
   #
-  # Resque worker's error handler.  Just log the error
+  # Resque worker's error handler.  Fail the job, bookeeping 
+  # and notification.
   #
   error: (error, worker, queue, job) ->
-    log.err "Error processing job #{JSON.stringify job}.  #{JSON.stringify error}"
+    jobId = job.args[0].jobId
+    @proceed jobId, =>    
+      jobId  = genkey jobId
+      log.err "Error processing job #{jobId}."  
+      job.err = error
+      multi = redis.multi()
+      multi.hset jobId, 'status', 'fail'
+      multi.hset jobId, 'error', JSON.stringify job
+      multi.exec (err) =>
+        return @capture err, {jobId: jobId} if err?
+        @notify jobId, 'fail'
 
   #
   # Construct the named resque workers that carry out
@@ -326,11 +372,13 @@ class Mimeograph
     if @resque? then @resque.end() else redisfs.end()
 
   #
-  # Namespace util for redis key gen.
+  # Continuation.  When the job has not failed the callback
+  # will be invoked.
   #
-  key: (args...) ->
-    args.unshift "mimeograph:job"
-    args.join ':'
+  proceed: (jobId, callback) ->
+    status jobId, (status) =>
+      return if status is 'fail'
+      callback()    
 
   #
   # Log the err.
@@ -342,5 +390,10 @@ class Mimeograph
 #
 # exports
 #
-mimeograph.process = (file)        -> new Mimeograph().process file
-mimeograph.start   = (workers = 5) -> new Mimeograph(workers).start()
+mimeograph.process = (args) ->
+  id   = args.shift() if args.length is 2
+  file = args.shift()
+  new Mimeograph().process id, file
+
+mimeograph.start = (workers = 5) -> 
+  new Mimeograph(workers).start()
