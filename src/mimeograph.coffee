@@ -4,11 +4,11 @@ mimeograph.version = '0.1.2'
 #
 # Dependencies
 #
-fs            = require 'fs'
-resque        = require 'coffee-resque'
-{_, log}      = require './utils'
-{redisfs}     = require 'redisfs'
-{exec, spawn} = require 'child_process'
+fs        = require 'fs'
+resque    = require 'coffee-resque'
+{spawn}   = require 'child_process'
+{_, log}  = require './utils'
+{redisfs} = require 'redisfs'
 
 #
 # module scoped redisfs instance
@@ -63,6 +63,7 @@ class Extractor extends Job
     fs.readFile file, 'utf8', (err, text) =>
       return @fail err if err?
       fs.unlink file
+      fs.unlink @key
       @complete text: text.trim()
 
 #
@@ -213,12 +214,10 @@ class Mimeograph
     {jobId, key, text} = result
     if not text.length then @enqueue 'split', key, jobId
     else
-      pages = text.split '\f'
-      pages.pop()
       multi = redis.multi()
-      multi.del key
-      multi.hset @key(jobId), 'text', pages.join '\f'
-      multi.exec (err) =>
+      multi.del  key
+      multi.hset @key(jobId), 'text', text
+      multi.exec (err, result) =>
         return @capture err, result if err?
         @finalize jobId
 
@@ -241,27 +240,28 @@ class Mimeograph
   finish: (result) ->
     {jobId, pageNumber, text} = result
     multi = redis.multi()
-    multi.hset    @key(jobId, 'text'), pageNumber, text, (err) =>
+    multi.hset    @key(jobId, 'text'), pageNumber, text
     multi.hincrby @key(jobId), 'num_processed', 1
     multi.hget    @key(jobId), 'num_pages'
     multi.exec (err, results) =>
       return @capture err, result if err?
       [processed, total] = results[1...]
-      @finalize jobId if processed is parseInt total
+      if processed is parseInt total
+        @hash2key jobId, (err) =>
+          return @capture err, result if err?
+          @finalize jobId 
 
   #
   # Wrap up the job.  
   #
   finalize: (jobId) ->
-    @hash2key jobId, (err) =>
+    multi = redis.multi()
+    multi.hset @key(jobId), 'ended', _.now()
+    multi.hdel @key(jobId), 'num_processed'
+    multi.hdel @key(jobId), 'num_pages'
+    multi.exec (err, results) =>
       return @capture err, result if err?
-      multi = redis.multi()
-      multi.hset @key(jobId), 'ended', _.now()
-      multi.hdel @key(jobId), 'num_processed'
-      multi.hdel @key(jobId), 'num_pages'
-      multi.exec (err, results) =>
-        return @capture err, result if err?
-        log.warn "finished    - finished job:#{jobId}"
+      log.warn "finished    - finished job:#{jobId}"
 
   #
   # Moves a hash to a key.  Fetches the entire hash,
