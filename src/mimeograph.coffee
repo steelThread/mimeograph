@@ -388,9 +388,8 @@ class Mimeograph
   # will be invoked.
   #
   shouldContinue: (jobId, callback) ->
-    jobStatus jobId, (status) =>
-      return if status is 'fail'
-      callback()    
+    jobStatus jobId, (status) => 
+      callback() if status isnt 'fail'
 
   #
   # Log the err.
