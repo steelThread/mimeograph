@@ -59,11 +59,10 @@ class Extractor extends Job
       @fetchText()
 
   fetchText: ->
-    file = "#{_.basename @key}.txt"
-    fs.readFile file, 'utf8', (err, text) =>
+    @file = "#{_.basename @key}.txt"
+    fs.readFile @file, 'utf8', (err, text) =>
       return @fail err if err?
-      fs.unlink file
-      fs.unlink @key
+      fs.unlink file for file in [@file, @key]
       @complete text: text.trim()
 
 #
@@ -107,6 +106,7 @@ class Splitter  extends Job
     fs.readdir '/tmp', (err, files) =>
       return @fail err if err?
       @findPages @basename, "#{file}" for file in files
+      fs.unlink @key
       @complete pages: @pages
 
   findPages: (basename, file) ->
@@ -128,27 +128,26 @@ class Recognizer extends Job
     @file      = "#{@basename}.txt"
 
   perform: ->
+    log "recognizing - #{@key}"
     redis2file @key, file: @key, (err) =>
       return @fail err if err?
       @recognize()
 
   recognize: ->
-    status @jobId, (status) =>
-      if status is 'fail' 
-        fs.unlink @key
-        @complete()
-      else
-        log "recognizing - #{@key}"
+    jobStatus @jobId, (status) =>
+      if status isnt 'fail' 
         proc = spawn 'tesseract', [@key, @basename]
         proc.on 'exit', (code) =>
           return @fail "tesseract exit(#{code})" if code isnt 0
           @fetchText()
+      else
+        fs.unlink @key
+        @complete()
 
   fetchText: ->
     fs.readFile @file, (err, text) =>
       return @fail err if err?
-      fs.unlink @key
-      fs.unlink @file
+      fs.unlink file for file in [@key, @file]
       @complete text: text, pageNumber: _.pageNumber @file
 
 #
@@ -169,7 +168,7 @@ genkey = (args...) ->
 #
 # Get a jobs status
 #
-status = (jobId, callback) ->
+jobStatus = (jobId, callback) ->
   redis.hget genkey(jobId), 'status', (err, status) => 
     callback status
 
@@ -206,13 +205,19 @@ class Mimeograph
   # schedule an extract job.
   #
   createJob: (jobId, file) ->
-    key = "/tmp/mimeograph-#{jobId}.pdf"
+    key = @filename jobId
     redis.hset genkey(jobId), 'started', _.now()
     file2redis file, key: key, deleteFile: false, (err) =>
       return @capture err, {jobId: jobId} if err?
       @enqueue 'extract', key, jobId
       log.warn "OK - created job:#{jobId} for file #{file}"
       @end()
+
+  #
+  # Generate a file name.
+  #
+  filename: (jobId) -> 
+    "/tmp/mimeograph-#{jobId}.pdf"
 
   #
   # Rescue worker's success callback.
@@ -260,7 +265,7 @@ class Mimeograph
   #
   finish: (result) ->
     {jobId, pageNumber, text} = result
-    @proceed jobId, =>
+    @shouldContinue jobId, =>
       multi = redis.multi()
       multi.hset    genkey(jobId, 'text'), pageNumber, text
       multi.hincrby genkey(jobId), 'num_processed', 1
@@ -268,10 +273,17 @@ class Mimeograph
       multi.exec (err, results) =>
         return @capture err, result if err?
         [processed, total] = results[1...]
-        if processed is parseInt total
-          @hash2key jobId, (err) =>
-            return @capture err, result if err?
-            @finalize jobId
+        @checkComplete jobId, processed, parseInt total
+
+  #
+  # Determine if all the pages have been processed and
+  # finalize if so.
+  #
+  checkComplete: (jobId, processed, total) ->
+    if processed is total
+      @hash2key jobId, (err) =>
+        return @capture err, result if err?
+        @finalize jobId
 
   #
   # Wrap up the job and publish a notification
@@ -309,7 +321,7 @@ class Mimeograph
       return callback err, {jobId: jobId} if err?
       pages.push hash[field] for field in _.keys(hash).sort()
       multi = redis.multi()
-      multi.del key
+      multi.del  key
       multi.hset genkey(jobId), 'text', pages.join '\f'
       multi.exec (err) => callback err
 
@@ -342,16 +354,16 @@ class Mimeograph
   #
   error: (error, worker, queue, job) ->
     jobId = job.args[0].jobId
-    @proceed jobId, =>    
-      jobId  = genkey jobId
-      log.err "Error processing job #{jobId}."  
-      job.err = error
+    @shouldContinue jobId, =>    
+      log.err "Error processing job #{job.class} #{jobId}"  
       multi = redis.multi()
-      multi.hset jobId, 'status', 'fail'
-      multi.hset jobId, 'error', JSON.stringify job
+      multi.hset genkey(jobId), 'status', 'fail'
+      multi.hset genkey(jobId), 'error', JSON.stringify _.extend(job, error)
+      multi.del  genkey(jobId, 'text') if job.class is 'ocr'
+      multi.del  @filename jobId if job.class is 'extract'
       multi.exec (err) =>
         return @capture err, {jobId: jobId} if err?
-        @notify jobId, 'fail'
+        @notify genkey(jobId), 'fail'
 
   #
   # Construct the named resque workers that carry out
@@ -375,8 +387,8 @@ class Mimeograph
   # Continuation.  When the job has not failed the callback
   # will be invoked.
   #
-  proceed: (jobId, callback) ->
-    status jobId, (status) =>
+  shouldContinue: (jobId, callback) ->
+    jobStatus jobId, (status) =>
       return if status is 'fail'
       callback()    
 
