@@ -195,10 +195,9 @@ class Mimeograph
   process: (id, file) ->
     fs.lstatSync file
     if id? then @createJob id, file
-    else
-      redis.incr genkey('ids'), (err, id) =>
-        return @capture err if err?
-        @createJob _.lpad(id), file
+    else redis.incr genkey('ids'), (err, id) =>
+      return @capture err if err?
+      @createJob _.lpad(id), file
 
   #
   # Creates a new mimeograph process job and
@@ -238,7 +237,8 @@ class Mimeograph
   #
   split: (result) ->
     {jobId, key, text} = result
-    if not text.trim().length then @enqueue 'split', key, jobId
+    if not text.trim().length 
+      @enqueue 'split', key, jobId
     else
       multi = redis.multi()
       multi.del  key
