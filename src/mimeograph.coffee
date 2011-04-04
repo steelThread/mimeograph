@@ -4,11 +4,11 @@ mimeograph.version = '0.1.2'
 #
 # Dependencies
 #
-fs        = require 'fs'
-resque    = require 'coffee-resque'
-{spawn}   = require 'child_process'
-{_, log}  = require './utils'
-{redisfs} = require 'redisfs'
+fs             = require 'fs'
+resque         = require 'coffee-resque'
+{spawn}        = require 'child_process'
+{redisfs}      = require 'redisfs'
+{_, log, puts} = require './utils'
 
 #
 # module scoped redisfs instance
@@ -193,11 +193,16 @@ class Mimeograph
   # Kick off a new job.
   #
   process: (id, file) ->
-    fs.lstatSync file
-    if id? then @createJob id, file
-    else redis.incr genkey('ids'), (err, id) =>
-      return @capture err if err?
-      @createJob _.lpad(id), file
+    try 
+      status = fs.lstatSync file
+      throw Error "'#{file}' is not a file." unless status.isFile()
+      if id? then @createJob id, file
+      else redis.incr genkey('ids'), (err, id) =>
+        return @capture err if err?
+        @createJob _.lpad(id), file
+    catch error
+      puts.stderr "#{error.message}"
+      @end()
 
   #
   # Creates a new mimeograph process job and
@@ -209,7 +214,7 @@ class Mimeograph
     file2redis file, key: key, deleteFile: false, (err) =>
       return @capture err, {jobId: jobId} if err?
       @enqueue 'extract', key, jobId
-      log.warn "OK - created job:#{jobId} for file #{file}"
+      puts.green "OK - created job:#{jobId} for file #{file}"
       @end()
 
   #

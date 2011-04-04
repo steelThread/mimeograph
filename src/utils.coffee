@@ -7,10 +7,11 @@ exports.log       = (msg) -> log msg.green
 exports.log.warn  = (msg) -> log msg.yellow
 exports.log.err   = (msg) -> log msg.red
 
-exports.puts       = (obj) -> puts stringify obj
-exports.puts.green = (obj) -> puts stringify(obj).green
-exports.puts.red   = (obj) -> puts stringify(obj).red
-exports.puts.grey  = (obj) -> puts stringify(obj).grey
+exports.puts        = (obj) -> puts stringify obj
+exports.puts.green  = (obj) -> puts stringify(obj).green
+exports.puts.red    = (obj) -> puts stringify(obj).red
+exports.puts.stderr = (obj) -> process.stderr.write "#{stringify(obj)}\n"
+exports.puts.grey   = (obj) -> puts stringify(obj).grey
 
 stringify = (obj) -> if _.isString obj then obj else inspect obj
 

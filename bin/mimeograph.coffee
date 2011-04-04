@@ -34,7 +34,13 @@ if args.length is 0 and argv.length is 0
   puts "v#{mimeograph.version}"
   process.exit()
 
-puts parser.help() if options.help
-puts "v#{mimeograph.version}" if options.version
+if options.help
+  puts parser.help() 
+  process.exit()
+
+if options.version  
+  puts "v#{mimeograph.version}"
+  process.exit()
+
 mimeograph.start options.workers if options.start
 mimeograph.process args if options.process
