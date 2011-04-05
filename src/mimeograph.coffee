@@ -181,6 +181,7 @@ class Mimeograph
       redis     : redis
       namespace : 'resque:mimeograph'
     @worker i for i in [0...count]
+    process.on 'SIGINT', => @end()
 
   #
   # Start the workers.
@@ -214,7 +215,7 @@ class Mimeograph
     file2redis file, key: key, deleteFile: false, (err) =>
       return @capture err, {jobId: jobId} if err?
       @enqueue 'extract', key, jobId
-      puts.green "OK - created job:#{jobId} for file #{file}"
+      puts.green "OK - created #{genkey(jobId)} for file #{file}"
       @end()
 
   #
