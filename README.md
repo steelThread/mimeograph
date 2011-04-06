@@ -26,16 +26,16 @@ individual step in the process is a separate coffee-resque job allowing for inte
 ## Running
 
 	Usage:
-	  mimeograph [OPTIONS] filename
+	  mimeograph [OPTIONS] [ID] filename
 
 	Available options:
 	  -h, --help         Displays options
 	  -v, --version      Shows certain's version.
 	  -w, --workers      Number of workers to create. Ex.: 5 (default)
 	  -s, --start        Starts a Mimeograph daemon.
-	  -r, --request      Kicks of the processing of a new file.
+	  -p, --process      Kicks of the processing of a new file.
 
-	v0.1.0
+	v0.1.2
 	
 	eg.  mimeograph -r test/test.pdf
 	     mimeograph -w 10 -s
