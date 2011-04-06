@@ -37,7 +37,7 @@ individual step in the process is a separate coffee-resque job allowing for inte
 
 	v0.1.2
 	
-	eg.  mimeograph -r test/test.pdf
+	eg.  mimeograph -p test/test.pdf
 	     mimeograph -w 10 -s
 
 ## License
