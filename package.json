@@ -1,6 +1,6 @@
 {
   "name": "mimeograph",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "CoffeeScript lib for PDF OCR and text extraction.",
   "keywords": ["node", "pdf", "ocr", "hocr", "coffeescript", "resque", "text extraction", "indexing"],
   "homepage": "https://github.com/morologous/mimeograph",
@@ -16,10 +16,10 @@
     "url": "https://github.com/morologous/mimeograph.git"
   },
   "dependencies": {
-    "underscore":    ">= 1.1.4",
-    "colors":        ">= 0.3.0",
-    "coffee-resque": ">= 0.1.2",
-    "redisfs":       ">= 0.1.1"
+    "underscore"    : ">= 1.1.4",
+    "colors"        : ">= 0.3.0",
+    "coffee-resque" : ">= 0.1.2",
+    "redisfs"       : ">= 0.1.1"
   },
   "engines": { "node": ">= 0.4.0" }
 }
