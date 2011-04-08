@@ -181,8 +181,9 @@ class Mimeograph
       redis     : redis
       namespace : 'resque:mimeograph'
     @worker i for i in [0...count]
-    process.on 'SIGINT', @end
-
+    process.on 'SIGINT',  @end
+    process.on "SIGTERM", @end
+    process.on "SIGQUIT", @end
   #
   # Start the workers.
   #
@@ -386,6 +387,7 @@ class Mimeograph
   # All done, disconnect the redis client.
   #
   end: =>
+    log.warn 'Shutting down!'
     worker.end() for worker in @workers
     if @resque? then @resque.end() else redisfs.end()
 
