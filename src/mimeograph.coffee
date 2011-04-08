@@ -1,5 +1,5 @@
 mimeograph = exports
-mimeograph.version = '0.1.2'
+mimeograph.version = '0.1.3'
 
 #
 # Dependencies
@@ -181,7 +181,7 @@ class Mimeograph
       redis     : redis
       namespace : 'resque:mimeograph'
     @worker i for i in [0...count]
-    process.on 'SIGINT', => @end()
+    process.on 'SIGINT', @end
 
   #
   # Start the workers.
@@ -228,7 +228,7 @@ class Mimeograph
   # Rescue worker's success callback.
   # Orchestrates the job steps.
   #
-  success: (worker, queue, job, result) ->
+  success: (worker, queue, job, result) =>
     switch job.class
       when 'extract' then @split result
       when 'split'   then @ocr result
@@ -358,7 +358,7 @@ class Mimeograph
   # Resque worker's error handler.  Fail the job, bookeeping
   # and notification.
   #
-  error: (error, worker, queue, job) ->
+  error: (error, worker, queue, job) =>
     jobId = job.args[0].jobId
     @shouldContinue jobId, =>
       log.err "Error processing job #{job.class} #{jobId}"
@@ -378,14 +378,14 @@ class Mimeograph
   worker: (name) ->
     @workers.push worker = @resque.worker 'mimeograph', jobs
     worker.name = "mimeograph:#{name}"
-    worker.on 'error',   _.bind @error,   @
-    worker.on 'success', _.bind @success, @
+    worker.on 'error',   @error
+    worker.on 'success', @success
     worker
 
   #
   # All done, disconnect the redis client.
   #
-  end: ->
+  end: =>
     worker.end() for worker in @workers
     if @resque? then @resque.end() else redisfs.end()
 
