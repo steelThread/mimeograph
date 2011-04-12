@@ -182,8 +182,8 @@ class Mimeograph
       namespace : 'resque:mimeograph'
     @worker i for i in [0...count]
     process.on 'SIGINT',  @end
-    process.on "SIGTERM", @end
-    process.on "SIGQUIT", @end
+    process.on 'SIGTERM', @end
+    process.on 'SIGQUIT', @end
   #
   # Start the workers.
   #
