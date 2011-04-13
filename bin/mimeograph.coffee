@@ -4,7 +4,7 @@ fs             = require 'fs'
 coffee         = require 'coffee-script'
 {puts}         = require '../src/utils'
 mimeograph     = require '../src/mimeograph'
-{OptionParser} = require 'coffee-script/optparse'
+{OptionParser} = require 'coffee-script/lib/optparse'
 
 require.extensions['.coffee'] = (module, filename) ->
    content = coffee.compile fs.readFileSync filename, 'utf8'
