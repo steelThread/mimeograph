@@ -1,5 +1,5 @@
 mimeograph = exports
-mimeograph.version = '0.1.3'
+mimeograph.version = '0.1.4'
 
 #
 # Dependencies
@@ -11,19 +11,20 @@ resque         = require 'coffee-resque'
 {_, log, puts} = require './utils'
 
 #
-# module scoped redisfs instance
+# export to global scope.  not ideal.
 #
-redisfs = redisfs
-  namespace : 'mimeograph'
-  prefix    : 'mimeograph-'
-  encoding  : 'base64'
+expose = (host, port) ->
+  redisfs = redisfs
+    namespace : 'mimeograph'
+    prefix    : 'mimeograph-'
+    encoding  : 'base64'
+    host      : host
+    port      : port
 
-#
-# module scoped utils
-#
-redis      = redisfs.redis
-file2redis = _.bind redisfs.file2redis, redisfs
-redis2file = _.bind redisfs.redis2file, redisfs
+  global.redisfs    = redisfs
+  global.redis      = redisfs.redis
+  global.file2redis = _.bind redisfs.file2redis, redisfs
+  global.redis2file = _.bind redisfs.redis2file, redisfs
 
 #
 # @abstract
@@ -176,7 +177,8 @@ jobStatus = (jobId, callback) ->
 # Manages the process.
 #
 class Mimeograph
-  constructor: (count, @workers = []) ->
+  constructor: (host, port, count, @workers = []) ->
+    expose host, port
     @resque = resque.connect
       redis     : redis
       namespace : 'resque:mimeograph'
@@ -409,10 +411,10 @@ class Mimeograph
 #
 # exports
 #
-mimeograph.process = (args) ->
+mimeograph.process = (args, host, port) ->
   id   = args.shift() if args.length is 2
   file = args.shift()
-  new Mimeograph().process id, file
+  new Mimeograph(host, port).process id, file
 
-mimeograph.start = (workers = 5) ->
-  new Mimeograph(workers).start()
+mimeograph.start = (host, port, workers = 5) ->
+  new Mimeograph(host, port, workers).start()
