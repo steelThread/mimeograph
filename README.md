@@ -28,14 +28,16 @@ individual step in the process is a separate coffee-resque job allowing for inte
 	Usage:
 	  mimeograph [OPTIONS] [ID] filename
 
-	Available options:
 	  -h, --help         Displays options
 	  -v, --version      Shows certain's version.
-	  -w, --workers      Number of workers to create. Ex.: 5 (default)
+	  -w, --workers      Number of workers to create. (Default: 5)
 	  -s, --start        Starts a Mimeograph daemon.
 	  -p, --process      Kicks of the processing of a new file.
+	      --port         Redis port. (Default: Redis' default)
+	      --host         Redis host. (Default: Redis' default)
 
-	v0.1.2
+	v0.1.4
+
 	
 	eg.  mimeograph -p test/test.pdf
 	     mimeograph -w 10 -s
