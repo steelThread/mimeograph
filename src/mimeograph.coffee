@@ -1,5 +1,5 @@
 mimeograph = exports
-mimeograph.version = '0.1.4'
+mimeograph.version = '0.1.5'
 
 #
 # Dependencies
@@ -135,6 +135,7 @@ class Recognizer extends Job
       @recognize()
 
   recognize: ->
+    # return @fail new Error('test')
     jobStatus @jobId, (status) =>
       if status isnt 'fail'
         proc = spawn 'tesseract', [@key, @basename]
@@ -146,7 +147,7 @@ class Recognizer extends Job
         @complete()
 
   fetchText: ->
-    fs.readFile @file, (err, text) =>
+    fs.readFile @file, 'utf8', (err, text) =>
       return @fail err if err?
       fs.unlink file for file in [@key, @file]
       @complete text: text, pageNumber: _.pageNumber @file
@@ -215,7 +216,7 @@ class Mimeograph
   createJob: (jobId, file) ->
     key = @filename jobId
     redis.hset genkey(jobId), 'started', _.now()
-    file2redis file, key: key, deleteFile: false, (err) =>
+    file2redis file, key: key, (err) =>
       return @capture err, {jobId: jobId} if err?
       @enqueue 'extract', key, jobId
       puts.green "OK - created #{genkey(jobId)} for file #{file}"
@@ -274,15 +275,14 @@ class Mimeograph
   #
   finish: (result) ->
     {jobId, pageNumber, text} = result
-    @shouldContinue jobId, =>
-      multi = redis.multi()
-      multi.hset    genkey(jobId, 'text'), pageNumber, text
-      multi.hincrby genkey(jobId), 'num_processed', 1
-      multi.hget    genkey(jobId), 'num_pages'
-      multi.exec (err, results) =>
-        return @capture err, result if err?
-        [processed, total] = results[1...]
-        @checkComplete jobId, processed, parseInt total
+    multi = redis.multi()
+    multi.hset    genkey(jobId,  'text'), pageNumber, text
+    multi.hincrby genkey(jobId), 'num_processed', 1
+    multi.hget    genkey(jobId), 'num_pages'
+    multi.exec (err, results) =>
+      return @capture err, result if err?
+      [processed, total] = results[1...]
+      @checkComplete jobId, processed, parseInt total
 
   #
   # Determine if all the pages have been processed and
@@ -290,10 +290,10 @@ class Mimeograph
   #
   checkComplete: (jobId, processed, total) ->
     if processed is total
-      @hash2key jobId, (err) =>
+      @move2hash jobId, (err) =>
         return @capture err, result if err?
         @finalize jobId
-
+        
   #
   # Wrap up the job and publish a notification
   #
@@ -301,7 +301,7 @@ class Mimeograph
     job = genkey jobId
     multi = redis.multi()
     multi.hset job, 'ended', _.now()
-    multi.hset job, 'status', 'success'
+    multi.hset job, 'status', 'complete'
     multi.hdel job, 'num_processed'
     multi.exec (err, results) =>
       return @capture err, result if err?
@@ -314,24 +314,31 @@ class Mimeograph
   # add the job to the completed set.  Sort of a poor
   # mans durability solution.
   #
-  notify: (job, status = 'success') ->
+  notify: (job, status = 'complete') ->
     redis.publish job, "#{job}:#{status}", (err, subscribers) =>
       return @capture err, result if err?
       redis.sadd genkey('completed'), job  unless subscribers
 
   #
-  # Moves a hash to a key.  Fetches the entire hash,
-  # sorts on the fields (page number) and pushes them
-  # into a key into the job's hashs.
+  # Moves the hash that contains the resulting ocr'd text into
+  # the 'text' field in the result hash.  Sorts on the fields 
+  # (page number) and pushes them into a key into the job's hashs.
+  # Optionally moves the 'error_pages' list if there were errors.
   #
-  hash2key: (jobId, callback, pages = []) ->
-    key = genkey jobId, 'text'
-    redis.hgetall key, (err, hash) =>
+  move2hash: (jobId, callback, pages = []) ->
+    hashkey   = genkey jobId, 'text'
+    errorskey = genkey jobId, 'error_pages'
+    multi = redis.multi()
+    multi.zrange  errorskey, 0, -1
+    multi.hgetall hashkey
+    multi.exec (err, result) =>
       return callback err, {jobId: jobId} if err?
+      [errors, hash] = result[0...]      
       pages.push hash[field] for field in _.keys(hash).sort()
       multi = redis.multi()
-      multi.del  key
+      multi.del  hashkey, errorskey
       multi.hset genkey(jobId), 'text', pages.join '\f'
+      multi.hset genkey(jobId), 'error_pages', errors.join ',' unless _.isEmpty errors
       multi.exec (err) => callback err
 
   #
@@ -358,18 +365,28 @@ class Mimeograph
       @enqueue job, file, jobId
 
   #
-  # Resque worker's error handler.  Fail the job, bookeeping
-  # and notification.
+  # Resque worker's error handler.  In the case of a failed ocr
+  # job track the error (count & page) and follow the 'success'
+  # path.  This is to support partial failures.  For the other
+  # classes of jobs fail and publish the failed message.
   #
   error: (error, worker, queue, job) =>
     jobId = job.args[0].jobId
-    @shouldContinue jobId, =>
-      log.err "Error processing job #{job.class} #{jobId}"
+    if job.class is 'ocr'
+      pageNumber = _.pageNumber(job.args[0].key)
+      log.err "error       - #{jobId} #{job.class} page: #{pageNumber}"
+      redis.zadd genkey(jobId, 'error_pages'), pageNumber, pageNumber, (err) =>
+        return @capture err if err?
+        @finish _.extend job, 
+          jobId      : jobId
+          pageNumber : pageNumber, 
+          text       : ''
+    else
+      log.err "error       - #{jobId} #{job.class}"
       multi = redis.multi()
-      multi.hset genkey(jobId), 'status', 'fail'
-      multi.hset genkey(jobId), 'error', JSON.stringify _.extend(job, error)
-      multi.del  genkey(jobId, 'text') if job.class is 'ocr'
-      multi.del  @filename jobId if job.class is 'extract'
+      multi.del  @filename jobId
+      multi.hset genkey(jobId), 'status', 'failed'
+      multi.hset genkey(jobId), 'error' , JSON.stringify _.extend(job, error)
       multi.exec (err) =>
         return @capture err, {jobId: jobId} if err?
         @notify genkey(jobId), 'fail'
@@ -392,14 +409,6 @@ class Mimeograph
     log.warn 'Shutting down!'
     worker.end() for worker in @workers
     if @resque? then @resque.end() else redisfs.end()
-
-  #
-  # Continuation.  When the job has not failed the callback
-  # will be invoked.
-  #
-  shouldContinue: (jobId, callback) ->
-    jobStatus jobId, (status) =>
-      callback() if status isnt 'fail'
 
   #
   # Log the err.
