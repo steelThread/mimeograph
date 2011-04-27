@@ -135,7 +135,6 @@ class Recognizer extends Job
       @recognize()
 
   recognize: ->
-    # return @fail new Error('test')
     jobStatus @jobId, (status) =>
       if status isnt 'fail'
         proc = spawn 'tesseract', [@key, @basename]
@@ -198,7 +197,7 @@ class Mimeograph
   # Kick off a new job.
   #
   process: (id, file) ->
-    try 
+    try
       status = fs.lstatSync file
       throw Error "'#{file}' is not a file." unless status.isFile()
       if id? then @createJob id, file
@@ -247,7 +246,7 @@ class Mimeograph
   #
   split: (result) ->
     {jobId, key, text} = result
-    if not text.trim().length 
+    if not text.trim().length
       @enqueue 'split', key, jobId
     else
       multi = redis.multi()
@@ -293,7 +292,7 @@ class Mimeograph
       @move2hash jobId, (err) =>
         return @capture err, result if err?
         @finalize jobId
-        
+
   #
   # Wrap up the job and publish a notification
   #
@@ -333,7 +332,7 @@ class Mimeograph
     multi.hgetall hashkey
     multi.exec (err, result) =>
       return callback err, {jobId: jobId} if err?
-      [errors, hash] = result[0...]      
+      [errors, hash] = result[0...]
       pages.push hash[field] for field in _.keys(hash).sort()
       multi = redis.multi()
       multi.del  hashkey, errorskey
@@ -366,9 +365,9 @@ class Mimeograph
 
   #
   # Resque worker's error handler.  In the case of a failed ocr
-  # job track the error (count & page) and follow the 'success'
-  # path.  This is to support partial failures.  For the other
-  # classes of jobs fail and publish the failed message.
+  # job track the error (page number) and follow the 'success'
+  # path via @finish.  This is to support partial failures.  For
+  # the other classes of jobs fail and publish the failed message.
   #
   error: (error, worker, queue, job) =>
     jobId = job.args[0].jobId
@@ -377,9 +376,9 @@ class Mimeograph
       log.err "error       - #{jobId} #{job.class} page: #{pageNumber}"
       redis.zadd genkey(jobId, 'error_pages'), pageNumber, pageNumber, (err) =>
         return @capture err if err?
-        @finish _.extend job, 
+        @finish _.extend job,
           jobId      : jobId
-          pageNumber : pageNumber, 
+          pageNumber : pageNumber
           text       : ''
     else
       log.err "error       - #{jobId} #{job.class}"
