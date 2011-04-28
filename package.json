@@ -13,7 +13,7 @@
   "directories": { "lib": "./lib" },
   "respository": { 
     "type": "git", 
-    "url": "https://github.com/morologous/mimeograph.git"
+    "url": "https://github.com/steelThread/mimeograph.git"
   },
   "dependencies": {
     "underscore"    : ">= 1.1.4",
