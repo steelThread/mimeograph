@@ -3,3 +3,5 @@
 .project
 lib
 test/*.pdf
+node_modules
+*.log
