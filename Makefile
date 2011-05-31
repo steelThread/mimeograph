@@ -17,12 +17,7 @@ test: deps
 publish: generate-js
 	@test `which npm` || echo 'You need npm to do npm publish... makes sense?'
 	npm publish
-	@remove-js
-
-link: generate-js
-	@test `which npm` || echo 'You need npm to do npm link... makes sense?'
-	npm link
-	@remove-js
+	@rm -fr lib/
 
 dev: generate-js
 	@coffee -wc -o lib src/*.coffee

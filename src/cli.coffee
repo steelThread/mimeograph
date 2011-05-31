@@ -24,23 +24,25 @@ switches = [
 ]
 
 argv = process.argv[2..]
-parser = new OptionParser switches, usage
-options = parser.parse argv
-args = options.arguments
-delete options.arguments
 
-if args.length is 0 and argv.length is 0
-  puts parser.help()
-  puts "v#{mimeograph.version}"
-  process.exit()
+@run = ->
+  parser = new OptionParser switches, usage
+  options = parser.parse argv
+  args = options.arguments
+  delete options.arguments
 
-if options.help
-  puts parser.help() 
-  process.exit()
+  if args.length is 0 and argv.length is 0
+    puts parser.help()
+    puts "v#{mimeograph.version}"
+    process.exit()
 
-if options.version  
-  puts "v#{mimeograph.version}"
-  process.exit()
+  if options.help
+    puts parser.help() 
+    process.exit()
 
-mimeograph.start options.host, options.port, options.workers if options.start
-mimeograph.process args if options.process
+  if options.version  
+    puts "v#{mimeograph.version}"
+    process.exit()
+
+  mimeograph.start options.host, options.port, options.workers if options.start
+  mimeograph.process args if options.process

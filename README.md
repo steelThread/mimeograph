@@ -36,7 +36,7 @@ individual step in the process is a separate coffee-resque job allowing for inte
 	      --port         Redis port. (Default: Redis' default)
 	      --host         Redis host. (Default: Redis' default)
 
-	v0.1.4
+	v1.0.0
 
 	
 	eg.  mimeograph -p test/test.pdf
