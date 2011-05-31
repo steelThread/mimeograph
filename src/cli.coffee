@@ -1,5 +1,3 @@
-#!/usr/bin/env coffee
-
 fs             = require 'fs'
 coffee         = require 'coffee-script'
 {puts}         = require '../src/utils'

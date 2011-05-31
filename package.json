@@ -9,7 +9,7 @@
     {"name": "Jason Yankus", "email": "jason@yankus.net"}
   ],
   "main": "./lib/mimeograph",
-  "bin": { "mimeograph": "./bin/mimeograph.coffee" },
+  "bin": { "mimeograph": "./bin/mimeograph" },
   "directories": { "lib": "./lib" },
   "respository": { 
     "type": "git", 
@@ -19,7 +19,7 @@
     "underscore"    : ">= 1.1.6",
     "colors"        : ">= 0.3.0",
     "coffee-resque" : ">= 0.1.4",
-    "redisfs"       : ">= 0.1.2"
+    "redisfs"       : ">= 1.0.0"
   },
   "engines": { "node": ">= 0.4.0" }
 }
