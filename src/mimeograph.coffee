@@ -9,6 +9,7 @@ resque         = require 'coffee-resque'
 {spawn}        = require 'child_process'
 {redisfs}      = require 'redisfs'
 {_, log, puts} = require './utils'
+{shutdownHook} = require './utils'
 
 #
 # export to global scope.  not ideal.
@@ -183,9 +184,8 @@ class Mimeograph
       redis     : redis
       namespace : 'resque:mimeograph'
     @worker i for i in [0...count]
-    process.on 'SIGINT',  @end
-    process.on 'SIGTERM', @end
-    process.on 'SIGQUIT', @end
+    shutdownHook @end
+
   #
   # Start the workers.
   #
@@ -404,10 +404,20 @@ class Mimeograph
   #
   # All done, disconnect the redis client.
   #
-  end: =>
+  end: (exit) =>
     log.warn 'Shutting down!'
-    worker.end() for worker in @workers
-    if @resque? then @resque.end() else redisfs.end()
+    @stopWorkers =>
+      if @resque? then @resque.end() else redisfs.end()
+      exit()    
+
+  #
+  # Shutdown all the workers, callsback when done
+  #    
+  stopWorkers: (done)->
+    if worker = @workers.pop()
+      worker.end => @stopWorkers done
+    else
+      done()
 
   #
   # Log the err.

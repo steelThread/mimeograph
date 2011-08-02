@@ -10,6 +10,7 @@ mimeograph is a simple CoffeeScript library to extract text and create searchabl
 individual step in the process is a separate coffee-resque job allowing for interesting scaling options.
 
 ## System Requirements
+
 - poppler-utils (pdftotext)
 - libtiff
 - Leptonica
@@ -17,7 +18,7 @@ individual step in the process is a separate coffee-resque job allowing for inte
 - ImageMagick
 - Extactiamge (hocr2pdf)
 
-## Install
+## Install Development
 
 	$ git clone git@github.com:morologous/mimeograph.git
 	$ cd mimeograph

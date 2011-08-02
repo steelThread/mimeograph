@@ -4,9 +4,9 @@ coffee         = require 'coffee-script'
 mimeograph     = require '../src/mimeograph'
 {OptionParser} = require 'coffee-script/lib/optparse'
 
-require.extensions['.coffee'] = (module, filename) ->
-   content = coffee.compile fs.readFileSync filename, 'utf8'
-   module._compile content, filename
+# require.extensions['.coffee'] = (module, filename) ->
+#    content = coffee.compile fs.readFileSync filename, 'utf8'
+#    module._compile content, filename
 
 usage = '''
   Usage:
@@ -19,8 +19,9 @@ switches = [
   ['-w', '--workers [NUMBER]', 'Number of workers to create. (Default: 5)']
   ['-s', '--start', 'Starts a Mimeograph daemon.']
   ['-p', '--process', 'Kicks of the processing of a new file.']
-  ['',   '--port [NUMBER]', "Redis port. (Default: Redis' default)"]
-  ['',   '--host [STRING]', "Redis host. (Default: Redis' default)"]
+  ['-i', '--info', 'Retrieve information for a given job.']
+  ['',   '--port [NUMBER]', "Redis port. (Default: Redis default)"]
+  ['',   '--host [STRING]', "Redis host. (Default: Redis default)"]
 ]
 
 argv = process.argv[2..]
@@ -30,7 +31,7 @@ argv = process.argv[2..]
   options = parser.parse argv
   args = options.arguments
   delete options.arguments
-
+  
   if args.length is 0 and argv.length is 0
     puts parser.help()
     puts "v#{mimeograph.version}"
@@ -43,6 +44,9 @@ argv = process.argv[2..]
   if options.version  
     puts "v#{mimeograph.version}"
     process.exit()
-
-  mimeograph.start options.host, options.port, options.workers if options.start
-  mimeograph.process args if options.process
+  
+  if options.start
+    mimeograph.start options.host, options.port, options.workers
+	
+  if options.process
+    mimeograph.process args, options.host, options.port
