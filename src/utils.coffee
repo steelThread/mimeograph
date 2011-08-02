@@ -35,13 +35,3 @@ exports._.lpad          = (val, length = 10, char = '0') ->
 process.on 'uncaughtException', (err) -> 
   exports.log.err "#{err.stack}"
   process.exit(-1)
-  
-#
-# Adds a shutdown hook
-#
-exports.shutdownHook = (cleanup) ->
-  tty = require 'tty'
-  tty.setRawMode true
-  process.openStdin().on 'keypress', (chunk, key) ->
-    if key? and key.ctrl and key.name is 'c'
-      cleanup -> process.exit 0
