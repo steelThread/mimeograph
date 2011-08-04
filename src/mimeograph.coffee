@@ -183,7 +183,6 @@ class Mimeograph
       redis     : redis
       namespace : 'resque:mimeograph'
     @worker i for i in [0...count]
-    ['SIGINT', 'SIGTERM', 'SIGQUIT']
     process.on 'SIGINT',  @end
     process.on 'SIGTERM', @end
     process.on 'SIGQUIT', @end
