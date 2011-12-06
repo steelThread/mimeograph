@@ -18,12 +18,36 @@ individual step in the process is a separate coffee-resque job allowing for inte
 - ImageMagick
 - Extactiamge (hocr2pdf)
 
-## Install Development
+## Install Development (OS X)
+Installation is a three step process:
+1. install node
+2. install mimeograph dependencies
+3. install mimeograph
 
-	$ git clone git@github.com:morologous/mimeograph.git
-	$ cd mimeograph
-	$ make link
-	
+### Node
+Mimeograph is currently tested with Node v0.4.8.
+1. Download [node v0.4.8](http://nodejs.org/dist/node-v0.4.8.tar.gz).
+1. Untar/unzip the contents and CD into the root directory (node-v0.4.8).
+1. Review the installation instructions found in README.md
+1. run "./configure"
+1. run "make"
+1. run "make install"
+1. run "node -v" to verify the installation has been successful.
+
+### Mimeo Dependencies
+This assumes that you have Homebrew installed and are using it for pacakge management on OS X.  If you aren't already using it download it [here](http://mxcl.github.com/homebrew/).  If you are already using Macport or Fink and are happy with them, just use these instructions as a guide.
+
+1. run "brew update"
+1. run "brew install poppler ghostscript imagemagick leptonica redis"
+1. run "brew info tesseract".  At the current time the Homebrew recipe for tesseract was for v3.00 of tesseract.  If the command you ran does not indicate >= v3.01 you will have to jump through some additional hoops.
+    1. if Homebrew has a package for tesseract >= 3.01 run: "brew install tesseract"
+    1. if Homebrew doesn't have a package for tesseract >= 3.01 run "brew edit tesseract" and update the contents of the tesseract.rb with [this](https://github.com/rwst/homebrew/blob/master/Library/Formula/tesseract.rb).
+
+### Mimeograph
+1. run "git clone git@github.com:morologous/mimeograph.git"
+1. run "cd mimeograph"
+1. run "make"
+
 ## Running
 
 	Usage:
