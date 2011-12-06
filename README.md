@@ -16,16 +16,17 @@ individual step in the process is a separate coffee-resque job allowing for inte
 - Leptonica
 - tesseract v3.01 (svn trunk)
 - ImageMagick
-- Extactiamge (hocr2pdf)
 
 ## Install Development (OS X)
 Installation is a three step process:
+
 1. install node
-2. install mimeograph dependencies
-3. install mimeograph
+1. install mimeograph dependencies
+1. install mimeograph
 
 ### Node
 Mimeograph is currently tested with Node v0.4.8.
+
 1. Download [node v0.4.8](http://nodejs.org/dist/node-v0.4.8.tar.gz).
 1. Untar/unzip the contents and CD into the root directory (node-v0.4.8).
 1. Review the installation instructions found in README.md
