@@ -9,6 +9,8 @@ resque         = require 'coffee-resque'
 {spawn}        = require 'child_process'
 {redisfs}      = require 'redisfs'
 {_, log, puts} = require './utils'
+async          = require 'async'
+path          = require 'path'
 
 #
 # export to global scope.  not ideal.
@@ -47,6 +49,9 @@ class Job
 # the accumlated text found in the pdf.
 #
 class Extractor extends Job
+  constructor: (@context, @callback) ->
+    super @context, @callback
+
   perform: ->
     log "extracting  - #{@key}"
     redis2file @key, file: @key, deleteKey: false, (err) =>
@@ -80,7 +85,7 @@ class Splitter  extends Job
     @basename = _.basename @key
     @args = [
       '-SDEVICE=pnggray'
-      '-r600x600'
+      '-r240x240'
       '-sPAPERSIZE=letter'
       "-sOutputFile=#{@basename}-%04d.png"
       '-dTextAlphaBits=4'
@@ -125,19 +130,26 @@ class Splitter  extends Job
 class Recognizer extends Job
   constructor: (@context, @callback) ->
     super @context, @callback
-    @basename  = _.basename @key
-    @file      = "#{@basename}.txt"
+    basename  = _.basename @key
+    #hocr generates file with html extension
+    @file      = "#{basename}.html"
+    @args = [
+      @key,
+      basename,
+      "+#{__dirname}/tesseract_hocr_config.txt"
+    ]
 
   perform: ->
     log "recognizing - #{@key}"
-    redis2file @key, file: @key, (err) =>
+    # need the image for page generation later
+    redis2file @key, file: @key, deleteKey: false, (err) =>
       return @fail err if err?
       @recognize()
 
   recognize: ->
     jobStatus @jobId, (status) =>
       if status isnt 'fail'
-        proc = spawn 'tesseract', [@key, @basename]
+        proc = spawn 'tesseract', @args
         proc.on 'exit', (code) =>
           return @fail "tesseract exit(#{code})" if code isnt 0
           @fetchText()
@@ -148,16 +160,81 @@ class Recognizer extends Job
   fetchText: ->
     fs.readFile @file, 'utf8', (err, text) =>
       return @fail err if err?
-      fs.unlink file for file in [@key, @file]
-      @complete text: text, pageNumber: _.pageNumber @file
+      fs.unlink @key
+      @complete hocr: @file
+
+class PageGenerator extends Job
+  constructor: (@context, @callback) ->
+    super @context, @callback
+    @basename = _.basename @key
+    @imgKey = "#{@basename}.png"
+    @hocrPath = "#{@basename}.hocr"
+    @page = "#{@basename}.pdf"
+
+  perform: ->
+    log "generating - #{@page}"
+    async.parallel [@fetchHocr, @fetchImage], @generate
+  
+  fetchHocr: (callback) =>
+    redis2file @key, file: @hocrPath, encoding: 'utf8', (err) =>
+      callback err
+
+  fetchImage: (callback) =>
+    redis2file @imgKey, file: @imgKey, (err) =>
+      callback err  
+
+  generate: (err) =>
+    return @fail "#{err}" if err?
+    args = [path.basename(@imgKey),  "-o#{@page}"]
+    proc = spawn "pdfbeads", args, cwd: path.dirname(@imgKey)
+    proc.on 'exit', (code) =>
+      return @fail "pdfbeads exit(#{code})" if code isnt 0
+      fs.unlink file for file in [@imgKey, @hocrPath]
+      # not returning contents of @page - just the file path
+      @complete spage: @page, pageNumber: _.pageNumber @page
+
+class PdfStitcher extends Job
+  constructor: (@context, @callback, @pages = []) ->
+    super @context, @callback
+    @page = "#{_.stripPageNumber @key[0]}.pdf"
+    @args = [
+      '-sPAPERSIZE=letter'
+      '-SDEVICE=pdfwrite'
+      '-dNOPAUSE'
+      '-dBATCH'
+      '-dSAFER'
+      "-sOutputFile=#{@page}"
+    ]
+
+  perform: ->
+    log "stitching - #{@jobId}:#{@key}"  
+    async.map @key, @fetchPage, (err, results) =>
+      return @fail err if err?
+      @stitch results
+
+  stitch: (pages) ->
+    proc = spawn 'gs', @args.concat(pages)
+    proc.on 'exit', (code) =>
+      return @fail "gs exit(#{code})" if code isnt 0
+      @cleanup pages
+      @complete page: @page
+
+  fetchPage: (pageKey, callback) ->
+    redis2file pageKey, file: pageKey, callback
+
+  cleanup: (pages) ->
+    fs.unlink page for page in pages
 
 #
 # The resque jobs.
 #
 jobs =
-  extract : (context, callback) -> new Extractor(context, callback).perform()
-  split   : (context, callback) -> new Splitter(context, callback).perform()
-  ocr     : (context, callback) -> new Recognizer(context, callback).perform()
+  extract       : (context, callback) -> new Extractor(context, callback).perform()
+  split         : (context, callback) -> new Splitter(context, callback).perform()
+  hocr          : (context, callback) -> new Recognizer(context, callback).perform()
+  pdf           : (context, callback) -> new PageGenerator(context, callback).perform()
+  stitch        : (context, callback) -> new PdfStitcher(context, callback).perform()
+  lastextract   : (context, callback) -> new Extractor(context, callback).perform()
 
 #
 # Namespace util for redis key gen.
@@ -219,7 +296,7 @@ class Mimeograph
     file2redis file, key: key, (err) =>
       return @capture err, {jobId: jobId} if err?
       @enqueue 'extract', key, jobId
-      puts.green "OK - created #{genkey(jobId)} for file #{file}"
+      log "OK - created #{genkey(jobId)} for file #{file}"
       @end()
 
   #
@@ -233,10 +310,14 @@ class Mimeograph
   # Orchestrates the job steps.
   #
   success: (worker, queue, job, result) =>
+    #log "success called #{require('util').inspect worker}:#{queue}:#{job.class}:#{require('util').inspect result}:"
     switch job.class
       when 'extract' then @split result
-      when 'split'   then @ocr result
-      when 'ocr'     then @finish result
+      when 'split'   then @hocr result
+      when 'hocr'    then @pdf result
+      when 'pdf'     then @stitch result
+      when 'stitch'  then @complete result
+      when 'lastextract' then @split result, true
 
   #
   # Schedule a split job if ocr is required,
@@ -245,54 +326,97 @@ class Mimeograph
   # the text is set in the text key for the
   # job.
   #
-  split: (result) ->
+  split: (result, bypass = false) ->
     {jobId, key, text} = result
-    if not text.trim().length
-      @enqueue 'split', key, jobId
-    else
+    if text.trim().length || bypass
       multi = redis.multi()
       multi.del  key
       multi.hset genkey(jobId), 'text', text
       multi.exec (err, result) =>
         return @capture err, result if err?
         @finalize jobId
+    else
+      @enqueue 'split', key, jobId
 
   #
   # Set the number of pages that came out of the
   # split step.  For each split file store the
-  # the file in redis and schedule an ocr job.
+  # the file in redis and schedule an hocr job.
   #
-  ocr: (result) ->
+  hocr: (result) ->
     {jobId, pages} = result
     redis.hset genkey(jobId), 'num_pages', pages.length, (err) =>
       return @capture err, result if err?
-      @storeAndEnqueue page, 'ocr', jobId for page in pages
+      @storeAndEnqueue page, 'hocr', jobId for page in pages
 
   #
-  # Store the ocr data in a redis hash and determine
+  # Store the hocr result in redis and schedule a pdf
+  # job.
+  #
+  pdf: (result) ->
+    {jobId, hocr} = result
+    @storeAndEnqueue hocr, 'utf8', 'pdf', jobId
+
+  #
+  # Store the searchable page in a redis hash and determine
   # if all the pages have been recognized at which point
   # finish.
   #
-  finish: (result) ->
-    {jobId, pageNumber, text} = result
-    multi = redis.multi()
-    multi.hset    genkey(jobId,  'text'), pageNumber, text
-    multi.hincrby genkey(jobId), 'num_processed', 1
-    multi.hget    genkey(jobId), 'num_pages'
-    multi.exec (err, results) =>
-      return @capture err, result if err?
-      [processed, total] = results[1...]
-      @checkComplete jobId, processed, parseInt total
+  stitch: (result) ->
+    {jobId, pageNumber, spage} = result
+    # TODO deal with pdfs that didn't generate errors?
+    # TODO replace spage hash with a sorted set scored by pagenum
+
+    # add the searchable page to a key
+    file2redis spage, key: spage, (err) =>
+    #file2redis spage,  (err) =>
+      return @capture err, {jobId: jobId, spage: spage, desc: 'error in Mimeograph.stitch() writing page'} if err?
+      # file is written - write the rest to redis
+      multi = redis.multi()
+      # increment the number of pages processed by one
+      multi.hincrby genkey(jobId), 'num_processed', 1
+      # fetch total number of pages in the pdf
+      multi.hget    genkey(jobId), 'num_pages'
+      multi.exec (err, results) =>
+        return @capture err, result if err?
+        [processed, total] = results
+        @checkComplete jobId, _.stripPageNumber(spage), processed, parseInt total
 
   #
   # Determine if all the pages have been processed and
   # finalize if so.
   #
-  checkComplete: (jobId, processed, total) ->
+  checkComplete: (jobId, baseKey, processed, total) ->
+    # if all inidivual pages have been processed
     if processed is total
-      @move2hash jobId, (err) =>
-        return @capture err, result if err?
-        @finalize jobId
+      # stitch the pages together
+      @gatherSPages jobId, baseKey, (results) =>
+        pages = []
+        pages.push spage for spage in results.sort()
+        @enqueue 'stitch', pages, jobId
+
+  gatherSPages: (jobId, baseKey, callback) ->
+    redis.keys "#{baseKey}*", (err, results) =>
+      return @capture err, {jobId: jobId} if err?
+      callback results
+
+  #
+  # Once the searchable pdf is ready this method will
+  # enqueue a text extraction job once again.
+  #
+  complete: (result) ->
+    {jobId, page} = result
+    # TODO need to push a change to redisfs to have more flexibility
+    # in the datastructure you want to store files in
+    fs.readFile page, "base64", (err, data) =>
+      key = genkey jobId
+      field = "outputpdf"
+      # TODO only store the doc once - this is a little ugly
+      # store the doc in the hset then in the key for the extract job
+      redis.hset key, field, data, (err, results) =>
+        return @capture err, {jobId: jobId, desc: "error in complete"} if err?
+        key = @filename jobId
+        @storeAndEnqueue page, 'lastextract', jobId
 
   #
   # Wrap up the job and publish a notification
@@ -305,7 +429,6 @@ class Mimeograph
     multi.hdel job, 'num_processed'
     multi.exec (err, results) =>
       return @capture err, result if err?
-      log.warn "finished    - #{job}"
       @notify job
 
   #
@@ -326,7 +449,6 @@ class Mimeograph
   # Optionally moves the 'error_pages' list if there were errors.
   #
   move2hash: (jobId, callback, pages = []) ->
-    hashkey   = genkey jobId, 'text'
     errorskey = genkey jobId, 'error_pages'
     multi = redis.multi()
     multi.zrange  errorskey, 0, -1

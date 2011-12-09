@@ -15,7 +15,7 @@ usage = '''
 
 switches = [
   ['-h', '--help', 'Displays options']
-  ['-v', '--version', "Shows certain's version."]
+  ['-v', '--version', "Shows version."]
   ['-w', '--workers [NUMBER]', 'Number of workers to create. (Default: 5)']
   ['-s', '--start', 'Starts a Mimeograph daemon.']
   ['-p', '--process', 'Kicks of the processing of a new file.']
