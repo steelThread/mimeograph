@@ -2,7 +2,7 @@ fs             = require 'fs'
 coffee         = require 'coffee-script'
 {puts}         = require '../src/utils'
 mimeograph     = require '../src/mimeograph'
-{OptionParser} = require 'coffee-script/lib/optparse'
+{OptionParser} = require 'coffee-script/lib/coffee-script/optparse'
 
 # require.extensions['.coffee'] = (module, filename) ->
 #    content = coffee.compile fs.readFileSync filename, 'utf8'
@@ -15,7 +15,7 @@ usage = '''
 
 switches = [
   ['-h', '--help', 'Displays options']
-  ['-v', '--version', "Shows certain's version."]
+  ['-v', '--version', "Shows version."]
   ['-w', '--workers [NUMBER]', 'Number of workers to create. (Default: 5)']
   ['-s', '--start', 'Starts a Mimeograph daemon.']
   ['-p', '--process', 'Kicks of the processing of a new file.']

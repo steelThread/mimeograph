@@ -28,6 +28,19 @@ exports._.lpad          = (val, length = 10, char = '0') ->
   val = val.toString().split("")
   val.unshift char while val.length < length
   val.join ''
+# this will remove the page number and everything after it
+exports._.stripPageNumber = (file) ->
+  file.substring 0, file.lastIndexOf('-')
+
+#
+# capture proc output - useful in debugging "spawn" or "exec" calls that are going awry
+#
+exports._.redirectOutput = (proc) ->
+  proc.stdout.on 'data', (data) ->
+  puts "stdout: #{data}"
+
+  proc.stderr.on 'data', (data) -> 
+  puts "stderr: #{data}"
 
 #
 # catch all the junk
