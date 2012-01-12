@@ -49,9 +49,6 @@ class Job
 # the accumlated text found in the pdf.
 #
 class Extractor extends Job
-  constructor: (@context, @callback) ->
-    super @context, @callback
-
   perform: ->
     log "extracting  - #{@key}"
     redis2file @key, file: @key, deleteKey: false, (err) =>
@@ -72,7 +69,7 @@ class Extractor extends Job
       @complete text: text
 
 #
-# Split the pdf file into individual .jpg files using
+# Split the pdf file into individual .png files using
 # ghostscript.
 #
 # callback will receive a hash with a 'pages' propery
@@ -120,12 +117,11 @@ class Splitter  extends Job
     @pages.push "/tmp/#{file}" if file.match "^#{basename}-{1}"
 
 #
-# Recognize (ocr) the text from the jpg images using
+# Recognize (ocr) the text, in hocr format, from the jpg images using
 # tesseract.
 #
-# callback will receive a hash with a 'text' field containing
-# the ocr text and a 'file' field containing the path to
-# the result.
+# callback will receive a hash with a 'hocr' field containing
+# the path to the hocr result.
 #
 class Recognizer extends Job
   constructor: (@context, @callback) ->
@@ -163,6 +159,13 @@ class Recognizer extends Job
       fs.unlink @key
       @complete hocr: @file
 
+#
+# Generate the searchable PDF for a single page using pdfbeads.
+#
+# callback will receive a hash with a 'spage' field containing
+# the path to the searchable pdf page and a 'pageNumber' field
+# containing the page number of the 'spage' in the ultimate pdf.
+#
 class PageGenerator extends Job
   constructor: (@context, @callback) ->
     super @context, @callback
@@ -193,9 +196,17 @@ class PageGenerator extends Job
       # not returning contents of @page - just the file path
       @complete spage: @page, pageNumber: _.pageNumber @page
 
+#
+# Generate the searchable PDF by combining all of the individual
+# pages generated for the PDF.
+#
+# callback will receive a hash with a 'page' field containing
+# the path to the completed pdf page.
+#
 class PdfStitcher extends Job
   constructor: (@context, @callback, @pages = []) ->
     super @context, @callback
+    @keys = @key # @keys is an array of redis keys
     @page = "#{_.stripPageNumber @key[0]}.pdf"
     @args = [
       '-sPAPERSIZE=letter'
@@ -207,8 +218,8 @@ class PdfStitcher extends Job
     ]
 
   perform: ->
-    log "stitching - #{@jobId}:#{@key}"  
-    async.map @key, @fetchPage, (err, results) =>
+    log "stitching - #{@jobId}:#{@keys}"  
+    async.map @keys, @fetchPage, (err, results) =>
       return @fail err if err?
       @stitch results
 
@@ -364,9 +375,6 @@ class Mimeograph
   #
   stitch: (result) ->
     {jobId, pageNumber, spage} = result
-    # TODO deal with pdfs that didn't generate errors?
-    # TODO replace spage hash with a sorted set scored by pagenum
-
     # add the searchable page to a key
     file2redis spage, key: spage, (err) =>
     #file2redis spage,  (err) =>
@@ -395,6 +403,11 @@ class Mimeograph
         pages.push spage for spage in results.sort()
         @enqueue 'stitch', pages, jobId
 
+  #
+  # Collect the keys for searchable pages generated for this
+  # jobId.  The callback will be passed a single argument, an
+  # array of keys.
+  #
   gatherSPages: (jobId, baseKey, callback) ->
     redis.keys "#{baseKey}*", (err, results) =>
       return @capture err, {jobId: jobId} if err?
