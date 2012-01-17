@@ -1,18 +1,19 @@
 {
   "name": "mimeograph",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "CoffeeScript lib for PDF OCR and text extraction.",
   "keywords": ["node", "pdf", "ocr", "hocr", "coffeescript", "resque", "text extraction", "indexing"],
   "homepage": "https://github.com/steelThread/mimeograph",
   "author": "Sean McDaniel <sean.mcdaniel@me.com>",
-  "contributors": [ 
+  "contributors": [
     {"name": "Jason Yankus", "email": "jason@yankus.net"}
+    {"name": "Carlos Fernandez", "email": "cfernandez@touzon.com"}
   ],
   "main": "./lib/mimeograph",
   "bin": { "mimeograph": "./bin/mimeograph" },
   "directories": { "lib": "./lib" },
-  "respository": { 
-    "type": "git", 
+  "respository": {
+    "type": "git",
     "url": "https://github.com/steelThread/mimeograph.git"
   },
   "dependencies": {
