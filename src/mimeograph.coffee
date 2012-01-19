@@ -1,5 +1,5 @@
-mimeograph = exports
-mimeograph.version = '1.0.0'
+mimeograph         = exports
+mimeograph.version = '1.1.0'
 
 #
 # Dependencies
@@ -10,7 +10,7 @@ resque         = require 'coffee-resque'
 {redisfs}      = require 'redisfs'
 {_, log, puts} = require './utils'
 async          = require 'async'
-path          = require 'path'
+path           = require 'path'
 
 #
 # export to global scope.  not ideal.
@@ -177,14 +177,14 @@ class PageGenerator extends Job
   perform: ->
     log "generating - #{@page}"
     async.parallel [@fetchHocr, @fetchImage], @generate
-  
+
   fetchHocr: (callback) =>
     redis2file @key, file: @hocrPath, encoding: 'utf8', (err) =>
       callback err
 
   fetchImage: (callback) =>
     redis2file @imgKey, file: @imgKey, (err) =>
-      callback err  
+      callback err
 
   generate: (err) =>
     return @fail "#{err}" if err?
@@ -218,7 +218,7 @@ class PdfStitcher extends Job
     ]
 
   perform: ->
-    log "stitching - #{@jobId}:#{@keys}"  
+    log "stitching - #{@jobId}:#{@keys}"
     async.map @keys, @fetchPage, (err, results) =>
       return @fail err if err?
       @stitch results
@@ -323,11 +323,11 @@ class Mimeograph
   success: (worker, queue, job, result) =>
     #log "success called #{require('util').inspect worker}:#{queue}:#{job.class}:#{require('util').inspect result}:"
     switch job.class
-      when 'extract' then @split result
-      when 'split'   then @hocr result
-      when 'hocr'    then @pdf result
-      when 'pdf'     then @stitch result
-      when 'stitch'  then @complete result
+      when 'extract'     then @split result
+      when 'split'       then @hocr result
+      when 'hocr'        then @pdf result
+      when 'pdf'         then @stitch result
+      when 'stitch'      then @complete result
       when 'lastextract' then @split result, true
 
   #
@@ -457,7 +457,7 @@ class Mimeograph
 
   #
   # Moves the hash that contains the resulting ocr'd text into
-  # the 'text' field in the result hash.  Sorts on the fields 
+  # the 'text' field in the result hash.  Sorts on the fields
   # (page number) and pushes them into a key into the job's hashs.
   # Optionally moves the 'error_pages' list if there were errors.
   #
@@ -547,7 +547,7 @@ class Mimeograph
 
   #
   # Shutdown all the workers, callsback when done
-  #    
+  #
   stopWorkers: (done) ->
     if worker = @workers.pop()
       worker.end => @stopWorkers done
