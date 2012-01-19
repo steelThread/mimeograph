@@ -6,7 +6,7 @@
   "homepage": "https://github.com/steelThread/mimeograph",
   "author": "Sean McDaniel <sean.mcdaniel@me.com>",
   "contributors": [
-    {"name": "Jason Yankus", "email": "jason@yankus.net"}
+    {"name": "Jason Yankus", "email": "jason@yankus.net"},
     {"name": "Carlos Fernandez", "email": "cfernandez@touzon.com"}
   ],
   "main": "./lib/mimeograph",
