@@ -1,6 +1,6 @@
 #
 # these are some minor utilities that are useful while performing manual
-# integration testing of mimeograph.  It is my hope that it will be shortly 
+# integration testing of mimeograph.  It is my hope that it will be shortly
 # deprecated in favor of a solid suite of unit tests.
 #
 
@@ -18,6 +18,7 @@ usage = '''
     testutils [OPTIONS]
 '''
 
+#TODO ability to specify redis server:port in listen & process switch
 switches = [
   ['-h', '--help', 'Displays options']
   ['-v', '--version', "Shows version."]
@@ -60,6 +61,7 @@ class Listener
       if hash.outputpdf? #copy results out
         outputpdf = hash.outputpdf
         hash.outputpdf = "output present and #{outputpdf.length} char(s) long"
+        #TODO create outputpdf dir it is doesn't already exist - perhaps we should put this in userhome
         pdf = "#{__dirname}/outputpdf/#{message}.pdf"
         fs.writeFile pdf, outputpdf, "base64", (err) =>
           return log.err "error writing out outputpdf for #{message} to #{pdf}: #{err}" if err?
@@ -68,7 +70,7 @@ class Listener
        log.warn "no outputpdf available for #{message}"
 
       log util.inspect hash
-  
+
   end: =>
     log.warn "shutting down"
     @psClient.quit()
@@ -81,11 +83,11 @@ class KickStart
     tmpTargetFile = "/tmp/#{jobId}"
 
     stats = fs.lstatSync sourceFile
-    log "size of #{sourceFile}: #{stats.size}"    
+    log "size of #{sourceFile}: #{stats.size}"
     @copy sourceFile, tmpTargetFile, () ->
       log "process: [#{jobId}, #{tmpTargetFile}]"
       mimeograph.process [jobId, tmpTargetFile]
- 
+
   @copy: (sourceFile, targetFile, callback) ->
     log "in copy"
     readStream = fs.createReadStream sourceFile
@@ -112,10 +114,10 @@ testutils.run = ->
     process.exit()
 
   if options.help
-    puts parser.help() 
+    puts parser.help()
     process.exit()
 
-  if options.version  
+  if options.version
     log "v#{mimeograph.version}"
     process.exit()
 
