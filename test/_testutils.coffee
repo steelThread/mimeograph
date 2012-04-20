@@ -7,18 +7,18 @@
 testutils = exports
 
 fs             = require 'fs'
-{puts, log}         = require '../src/utils'
+{puts, log}    = require '../src/utils'
 {OptionParser} = require 'coffee-script/lib/coffee-script/optparse'
 mimeograph     = require '../src/mimeograph'
 redis          = require 'redis'
 util           = require 'util'
+path           = require 'path'
 
 usage = '''
   Usage:
     testutils [OPTIONS]
 '''
 
-#TODO ability to specify redis server:port in listen & process switch
 switches = [
   ['-h', '--help', 'Displays options']
   ['-v', '--version', "Shows version."]
@@ -61,18 +61,41 @@ class Listener
     @client.hgetall channel, (err, hash) =>
       return log.err "error retrieving hash #{message}: #{err}" if err?
       if hash.outputpdf? #copy results out
-        outputpdf = hash.outputpdf
-        hash.outputpdf = "output present and #{outputpdf.length} char(s) long"
-        #TODO create outputpdf dir it is doesn't already exist - perhaps we should put this in userhome
-        pdf = "#{__dirname}/outputpdf/#{message}.pdf"
-        fs.writeFile pdf, outputpdf, "base64", (err) =>
-          return log.err "error writing out outputpdf for #{message} to #{pdf}: #{err}" if err?
-          log "wrote outputpdf for #{message} to #{pdf}"
+        @processOutputPdf hash, message
       else
        log.warn "no outputpdf available for #{message}"
 
       log util.inspect hash
 
+  processOutputPdf: (hash, message) ->
+    outputpdf = hash.outputpdf
+    hash.outputpdf = "output present and #{outputpdf.length} char(s) long"
+    #perhaps we should put this in userhome
+    pdfDir = "#{__dirname}/outputpdf"
+    pdf = "#{pdfDir}/#{message}.pdf"
+    path.exists pdfDir, (exists) =>
+      if exists # make sure it is a dir and write to it
+        fs.stat pdfDir, (err, stats) =>
+          return log.err err if err?
+          return log.err "#{pdfDir} must be a directory" unless stats.isDirectory()
+          @writePdf pdf, outputpdf, message
+      else # create the dir & write to it
+        fs.mkdir pdfDir, (err) =>
+          return log.err if err?
+          @writePdf pdf, outputpdf, message
+
+  writePdf: (pdf, outputpdf, message) ->
+    fs.writeFile pdf, outputpdf, "base64", (err) =>
+      return log.err "error writing out outputpdf for #{message} to #{pdf}: #{err}" if err?
+      log "wrote outputpdf for #{message} to #{pdf}"
+
+  unboundEnd: ->
+    log.warn "shutting down"
+    @psClient.quit()
+    @client.quit()
+
+  # using => instead of -> because end is called in callbacks specified in
+  # the constructor
   end: =>
     log.warn "shutting down"
     @psClient.quit()
