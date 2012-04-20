@@ -24,23 +24,25 @@ switches = [
   ['-v', '--version', "Shows version."]
   ['-l', '--listen', 'Listen for mimegraph job completion messages.']
   ['-p', '--process [file]', 'Kicks of the processing of a new file.']
-  ['-t', '--testfile [file]', 'Read the contents of this file and output the length of the associated string.']
   ['-c', '--cleanup', 'Delete all keys from redis']
+  ['-r', '--redis [hostcolonport]', 'host:port for redis. can be specified as:
+ <host>:<port>, <host> or :<port>. In left unspecified the default host and port
+ will be used.']
 ]
 
 class CleanupRedis
-  @cleanup: ->
-    client = redis.createClient()
+  @cleanup: (redisConfig)->
+    client = redisConfig.createClient()
     client.flushdb (err) ->
       return log.err "error flushing redis db: #{err}" if err?
       log "successfully flushed redis db."
       client.quit()
 
 class Listener
-  constructor: ->
+  constructor: (redisConfig)->
     # access redis
-    @psClient = redis.createClient()
-    @client = redis.createClient()
+    @psClient = redisConfig.createClient()
+    @client = redisConfig.createClient()
     process.on 'SIGINT',  @end
     process.on 'SIGTERM', @end
     process.on 'SIGQUIT', @end
@@ -77,7 +79,7 @@ class Listener
     @client.quit()
 
 class KickStart
-  @kickStart: (sourceFile) ->
+  @kickStart: (sourceFile, redisConfig) ->
     log "file to process: #{sourceFile}"
     jobId = new Date().getTime()
     tmpTargetFile = "/tmp/#{jobId}"
@@ -86,7 +88,7 @@ class KickStart
     log "size of #{sourceFile}: #{stats.size}"
     @copy sourceFile, tmpTargetFile, () ->
       log "process: [#{jobId}, #{tmpTargetFile}]"
-      mimeograph.process [jobId, tmpTargetFile]
+      mimeograph.process [jobId, tmpTargetFile], redisConfig.host, redisConfig.port
 
   @copy: (sourceFile, targetFile, callback) ->
     log "in copy"
@@ -100,6 +102,21 @@ class KickStart
     writeStream.on 'error', (err)->
       log.err "error writing from #{targetFile}: #{err}"
     readStream.pipe writeStream
+
+class RedisConfig
+  constructor: (configString)->
+    configString = '' unless configString?
+    semiPosition = configString.indexOf ':'
+    if semiPosition  == -1 #only host name
+      @host = configString
+    else if semiPosition == 0 #only port
+      @port = configString.substr 1
+    else
+      @host = configString.substr 0, semiPosition
+      @port = configString.substr (semiPosition+1)
+
+  createClient: ->
+    redis.createClient @port, @host
 
 testutils.run = ->
   argv = process.argv[2..]
@@ -122,10 +139,10 @@ testutils.run = ->
     process.exit()
 
   if options.listen
-    new Listener().listen()
+    new Listener(new RedisConfig(options.redis)).listen()
 
   if options.cleanup
-    CleanupRedis.cleanup()
+    CleanupRedis.cleanup(new RedisConfig(options.redis))
 
   if options.process
-    KickStart.kickStart options.process
+    KickStart.kickStart options.process, new RedisConfig(options.redis)
