@@ -117,7 +117,7 @@ class Splitter  extends Job
     @pages.push "/tmp/#{file}" if file.match "^#{basename}-{1}"
 
 #
-# Recognize (ocr) the text, in hocr format, from the jpg images using
+# Recognize (ocr) the text, in hocr format, from the images using
 # tesseract.
 #
 # callback will receive a hash with a 'hocr' field containing
@@ -188,8 +188,13 @@ class PageGenerator extends Job
 
   generate: (err) =>
     return @fail "#{err}" if err?
-    args = [path.basename(@imgKey),  "-o#{@page}"]
-    proc = spawn "pdfbeads", args, cwd: path.dirname(@imgKey)
+    generator_path = path.join(__dirname, "mimeo_pdfbeads.rb")
+    args = [generator_path, path.basename(@imgKey),  "-o#{@page}"]
+    # execute the mimeo_pdfbeads.rb script via ruby cli. this avoids the need to:
+    # -include mimeo_pdfbeads as a executable in this package, which would
+    #expose this ugliness to the user
+    # -having to ensure that mimeo_pdfbeads has executable permission
+    proc = spawn "ruby", args, cwd: path.dirname(@imgKey)
     proc.on 'exit', (code) =>
       return @fail "pdfbeads exit(#{code})" if code isnt 0
       fs.unlink file for file in [@imgKey, @hocrPath]

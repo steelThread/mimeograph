@@ -37,14 +37,14 @@ exports._.stripPageNumber = (file) ->
 #
 exports._.redirectOutput = (proc) ->
   proc.stdout.on 'data', (data) ->
-  puts "stdout: #{data}"
+    puts "stdout: #{data}"
 
-  proc.stderr.on 'data', (data) -> 
-  puts "stderr: #{data}"
+  proc.stderr.on 'data', (data) ->
+    puts "stderr: #{data}"
 
 #
 # catch all the junk
 #
-process.on 'uncaughtException', (err) -> 
+process.on 'uncaughtException', (err) ->
   exports.log.err "#{err.stack}"
   process.exit(-1)
