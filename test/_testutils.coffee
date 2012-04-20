@@ -1,17 +1,18 @@
 #
 # these are some minor utilities that are useful while performing manual
-# integration testing of mimeograph.  It is my hope that it will be shortly 
+# integration testing of mimeograph.  It is my hope that it will be shortly
 # deprecated in favor of a solid suite of unit tests.
 #
 
 testutils = exports
 
 fs             = require 'fs'
-{puts, log}         = require '../src/utils'
+{puts, log}    = require '../src/utils'
 {OptionParser} = require 'coffee-script/lib/coffee-script/optparse'
 mimeograph     = require '../src/mimeograph'
 redis          = require 'redis'
 util           = require 'util'
+path           = require 'path'
 
 usage = '''
   Usage:
@@ -23,23 +24,25 @@ switches = [
   ['-v', '--version', "Shows version."]
   ['-l', '--listen', 'Listen for mimegraph job completion messages.']
   ['-p', '--process [file]', 'Kicks of the processing of a new file.']
-  ['-t', '--testfile [file]', 'Read the contents of this file and output the length of the associated string.']
   ['-c', '--cleanup', 'Delete all keys from redis']
+  ['-r', '--redis [hostcolonport]', 'host:port for redis. can be specified as:
+ <host>:<port>, <host> or :<port>. In left unspecified the default host and port
+ will be used.']
 ]
 
 class CleanupRedis
-  @cleanup: ->
-    client = redis.createClient()
+  @cleanup: (redisConfig)->
+    client = redisConfig.createClient()
     client.flushdb (err) ->
       return log.err "error flushing redis db: #{err}" if err?
       log "successfully flushed redis db."
       client.quit()
 
 class Listener
-  constructor: ->
+  constructor: (redisConfig)->
     # access redis
-    @psClient = redis.createClient()
-    @client = redis.createClient()
+    @psClient = redisConfig.createClient()
+    @client = redisConfig.createClient()
     process.on 'SIGINT',  @end
     process.on 'SIGTERM', @end
     process.on 'SIGQUIT', @end
@@ -58,34 +61,58 @@ class Listener
     @client.hgetall channel, (err, hash) =>
       return log.err "error retrieving hash #{message}: #{err}" if err?
       if hash.outputpdf? #copy results out
-        outputpdf = hash.outputpdf
-        hash.outputpdf = "output present and #{outputpdf.length} char(s) long"
-        pdf = "#{__dirname}/outputpdf/#{message}.pdf"
-        fs.writeFile pdf, outputpdf, "base64", (err) =>
-          return log.err "error writing out outputpdf for #{message} to #{pdf}: #{err}" if err?
-          log "wrote outputpdf for #{message} to #{pdf}"
+        @processOutputPdf hash, message
       else
        log.warn "no outputpdf available for #{message}"
 
       log util.inspect hash
-  
+
+  processOutputPdf: (hash, message) ->
+    outputpdf = hash.outputpdf
+    hash.outputpdf = "output present and #{outputpdf.length} char(s) long"
+    #perhaps we should put this in userhome
+    pdfDir = "#{__dirname}/outputpdf"
+    pdf = "#{pdfDir}/#{message}.pdf"
+    path.exists pdfDir, (exists) =>
+      if exists # make sure it is a dir and write to it
+        fs.stat pdfDir, (err, stats) =>
+          return log.err err if err?
+          return log.err "#{pdfDir} must be a directory" unless stats.isDirectory()
+          @writePdf pdf, outputpdf, message
+      else # create the dir & write to it
+        fs.mkdir pdfDir, (err) =>
+          return log.err if err?
+          @writePdf pdf, outputpdf, message
+
+  writePdf: (pdf, outputpdf, message) ->
+    fs.writeFile pdf, outputpdf, "base64", (err) =>
+      return log.err "error writing out outputpdf for #{message} to #{pdf}: #{err}" if err?
+      log "wrote outputpdf for #{message} to #{pdf}"
+
+  unboundEnd: ->
+    log.warn "shutting down"
+    @psClient.quit()
+    @client.quit()
+
+  # using => instead of -> because end is called in callbacks specified in
+  # the constructor
   end: =>
     log.warn "shutting down"
     @psClient.quit()
     @client.quit()
 
 class KickStart
-  @kickStart: (sourceFile) ->
+  @kickStart: (sourceFile, redisConfig) ->
     log "file to process: #{sourceFile}"
     jobId = new Date().getTime()
     tmpTargetFile = "/tmp/#{jobId}"
 
     stats = fs.lstatSync sourceFile
-    log "size of #{sourceFile}: #{stats.size}"    
+    log "size of #{sourceFile}: #{stats.size}"
     @copy sourceFile, tmpTargetFile, () ->
       log "process: [#{jobId}, #{tmpTargetFile}]"
-      mimeograph.process [jobId, tmpTargetFile]
- 
+      mimeograph.process [jobId, tmpTargetFile], redisConfig.host, redisConfig.port
+
   @copy: (sourceFile, targetFile, callback) ->
     log "in copy"
     readStream = fs.createReadStream sourceFile
@@ -98,6 +125,21 @@ class KickStart
     writeStream.on 'error', (err)->
       log.err "error writing from #{targetFile}: #{err}"
     readStream.pipe writeStream
+
+class RedisConfig
+  constructor: (configString)->
+    configString = '' unless configString?
+    semiPosition = configString.indexOf ':'
+    if semiPosition  == -1 #only host name
+      @host = configString
+    else if semiPosition == 0 #only port
+      @port = configString.substr 1
+    else
+      @host = configString.substr 0, semiPosition
+      @port = configString.substr (semiPosition+1)
+
+  createClient: ->
+    redis.createClient @port, @host
 
 testutils.run = ->
   argv = process.argv[2..]
@@ -112,18 +154,18 @@ testutils.run = ->
     process.exit()
 
   if options.help
-    puts parser.help() 
+    puts parser.help()
     process.exit()
 
-  if options.version  
+  if options.version
     log "v#{mimeograph.version}"
     process.exit()
 
   if options.listen
-    new Listener().listen()
+    new Listener(new RedisConfig(options.redis)).listen()
 
   if options.cleanup
-    CleanupRedis.cleanup()
+    CleanupRedis.cleanup(new RedisConfig(options.redis))
 
   if options.process
-    KickStart.kickStart options.process
+    KickStart.kickStart options.process, new RedisConfig(options.redis)
