@@ -332,26 +332,29 @@ class Mimeograph
       when 'hocr'        then @pdf result
       when 'pdf'         then @stitch result
       when 'stitch'      then @complete result
-      when 'lastextract' then @split result, true
+      when 'lastextract' then @recordText result.jobId, result.key, result.text
 
   #
   # Schedule a split job if ocr is required,
   # ie the extract step didn't produce any text.
-  # If ocr isn't required job is finished and
+  # If ocr isn't required the job is finished and
   # the text is set in the text key for the
   # job.
   #
-  split: (result, bypass = false) ->
+  split: (result) ->
     {jobId, key, text} = result
-    if text.trim().length || bypass
-      multi = redis.multi()
-      multi.del  key
-      multi.hset genkey(jobId), 'text', text
-      multi.exec (err, result) =>
-        return @capture err, result if err?
-        @finalize jobId
+    if text.trim().length
+      recordText jobId, text
     else
       @enqueue 'split', key, jobId
+
+  recordText: (jobId, key, text) ->
+    multi = redis.multi()
+    multi.del  key
+    multi.hset genkey(jobId), 'text', text
+    multi.exec (err, result) =>
+      return @capture err, result if err?
+      @finalize jobId
 
   #
   # Set the number of pages that came out of the
@@ -398,7 +401,7 @@ class Mimeograph
   # finalize if so.
   #
   checkComplete: (jobId, baseKey, processed, total) ->
-    # if all inidivual pages have been processed
+    # if all individual pages have been processed
     if processed is total
       # stitch the pages together
       @gatherSPages jobId, baseKey, (results) =>
@@ -448,7 +451,7 @@ class Mimeograph
       @notify job
 
   #
-  # Attempt to notify clients about job completness.
+  # Attempt to notify clients about job completeness.
   # In the event where there were no subscribers
   # add the job to the completed set.  Sort of a poor
   # mans durability solution.
@@ -464,6 +467,7 @@ class Mimeograph
   # (page number) and pushes them into a key into the job's hashs.
   # Optionally moves the 'error_pages' list if there were errors.
   #
+  # TODO: pretty sure this is never called
   move2hash: (jobId, callback, pages = []) ->
     errorskey = genkey jobId, 'error_pages'
     multi = redis.multi()
