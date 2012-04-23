@@ -1,0 +1,139 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="chrome=1">
+    <title>Mimeograph by steelThread</title>
+    
+    <link rel="stylesheet" href="stylesheets/styles.css">
+    <link rel="stylesheet" href="stylesheets/pygment_trac.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+    <!--[if lt IE 9]>
+    <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+  </head>
+  <body>
+    <div class="wrapper">
+      <header>
+        <h1>Mimeograph</h1>
+        <p>CoffeeScript lib for PDF OCR and text extraction</p>
+        <p class="view"><a href="https://github.com/steelThread/mimeograph">View the Project on GitHub <small>steelThread/mimeograph</small></a></p>
+        <ul>
+          <li><a href="https://github.com/steelThread/mimeograph/zipball/master">Download <strong>ZIP File</strong></a></li>
+          <li><a href="https://github.com/steelThread/mimeograph/tarball/master">Download <strong>TAR Ball</strong></a></li>
+          <li><a href="https://github.com/steelThread/mimeograph">Fork On <strong>GitHub</strong></a></li>
+        </ul>
+      </header>
+      <section>
+        <h2>Description</h2>
+
+<p>mimeograph is a simple CoffeeScript library to extract text and create searchable pdf files, OCRing where necessary.  Each
+individual step in the process is a separate coffee-resque job allowing for interesting scaling options.</p>
+
+<h2>System Requirements</h2>
+
+<ul>
+<li>poppler-utils (pdftotext)</li>
+<li>libtiff</li>
+<li>Leptonica</li>
+<li>tesseract v3.01 (svn trunk)</li>
+<li>ImageMagick</li>
+</ul><h2>Install Development (OS X)</h2>
+
+<p>Installation is a three step process:</p>
+
+<ol>
+<li>install node</li>
+<li>install mimeograph dependencies</li>
+<li>install mimeograph</li>
+</ol><h3>Node</h3>
+
+<p>Mimeograph is currently tested with Node v0.4.8.</p>
+
+<ol>
+<li>Download <a href="http://nodejs.org/dist/node-v0.4.8.tar.gz">node v0.4.8</a>.</li>
+<li>Untar/unzip the contents and CD into the root directory (node-v0.4.8).</li>
+<li>Review the installation instructions found in README.md</li>
+<li>run "./configure"</li>
+<li>run "make"</li>
+<li>run "make install"</li>
+<li>run "node -v" to verify the installation has been successful.</li>
+</ol><h3>Mimeo Dependencies</h3>
+
+<p>This assumes that you have Homebrew installed and are using it for pacakge management on OS X.  If you aren't already using it download it <a href="http://mxcl.github.com/homebrew/">here</a>.  If you are already using Macport or Fink and are happy with them, just use these instructions as a guide.</p>
+
+<ol>
+<li>run "brew update"</li>
+<li>run "brew install poppler ghostscript imagemagick leptonica redis"</li>
+<li>run "brew info tesseract".  At the current time the Homebrew recipe for tesseract was for v3.00 of tesseract.  If the command you ran does not indicate &gt;= v3.01 you will have to jump through some additional hoops.
+
+<ol>
+<li>if Homebrew has a package for tesseract &gt;= 3.01 run: "brew install tesseract"</li>
+<li>if Homebrew doesn't have a package for tesseract &gt;= 3.01 run "brew edit tesseract" and update the contents of the tesseract.rb with <a href="https://github.com/rwst/homebrew/blob/master/Library/Formula/tesseract.rb">this</a>.</li>
+</ol>
+</li>
+</ol><h3>Mimeograph</h3>
+
+<ol>
+<li>run "git clone <a href="mailto:git@github.com">git@github.com</a>:morologous/mimeograph.git"</li>
+<li>run "cd mimeograph"</li>
+<li>run "make"</li>
+</ol><h2>Running</h2>
+
+<pre><code>Usage:
+  mimeograph [OPTIONS] [ID] filename
+
+  -h, --help         Displays options
+  -v, --version      Shows certain's version.
+  -w, --workers      Number of workers to create. (Default: 5)
+  -s, --start        Starts a Mimeograph daemon.
+  -p, --process      Kicks of the processing of a new file.
+      --port         Redis port. (Default: Redis' default)
+      --host         Redis host. (Default: Redis' default)
+
+v1.0.0
+
+
+eg.  mimeograph -p test/test.pdf
+     mimeograph -w 10 -s
+</code></pre>
+
+<h2>License</h2>
+
+<p>MIT License</p>
+
+<p>Copyright (c) 2011 Sean McDaniel</p>
+
+<p>Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:</p>
+
+<p>The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.</p>
+
+<p>THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.</p>
+
+<h4>Author: <a href="">Sean McDaniel</a>
+</h4>
+
+<h4>Author: <a href="">Jason Yankus</a>
+</h4>
+      </section>
+      <footer>
+        <p>This project is maintained by <a href="https://github.com/steelThread">steelThread</a></p>
+        <p><small>Hosted on GitHub Pages &mdash; Theme by <a href="https://github.com/orderedlist">orderedlist</a></small></p>
+      </footer>
+    </div>
+    <script src="javascripts/scale.fix.js"></script>
+    
+  </body>
+</html>
