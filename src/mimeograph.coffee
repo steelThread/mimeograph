@@ -1,6 +1,10 @@
 mimeograph         = exports
 mimeograph.version = '1.1.0'
-
+# although pdf beads works with a variety of image types
+# it will only process images with certain extension - regardless
+# of the actual image type.  this happens to be one that pdfbeads
+# plays nicely with
+mimeograph.imageExtension = 'png'
 #
 # Dependencies
 #
@@ -69,8 +73,8 @@ class Extractor extends Job
       @complete text: text
 
 #
-# Split the pdf file into individual .png files using
-# ghostscript.
+# Split the pdf file into individual image files per
+# page using ghostscript.
 #
 # callback will receive a hash with a 'pages' propery
 # containing and array of all the paths produced by
@@ -81,10 +85,11 @@ class Splitter  extends Job
     super @context, @callback
     @basename = _.basename @key
     @args = [
-      '-SDEVICE=pnggray'
+      #jpeg supports color
+      '-SDEVICE=jpeg'
       '-r240x240'
       '-sPAPERSIZE=letter'
-      "-sOutputFile=#{@basename}-%04d.png"
+      "-sOutputFile=#{@basename}-%04d.#{mimeograph.imageExtension}"
       '-dTextAlphaBits=4'
       '-dBATCH'
       '-dNOPAUSE'
@@ -170,7 +175,7 @@ class PageGenerator extends Job
   constructor: (@context, @callback) ->
     super @context, @callback
     @basename = _.basename @key
-    @imgKey = "#{@basename}.png"
+    @imgKey = "#{@basename}.#{mimeograph.imageExtension}"
     @hocrPath = "#{@basename}.hocr"
     @page = "#{@basename}.pdf"
 
@@ -189,7 +194,8 @@ class PageGenerator extends Job
   generate: (err) =>
     return @fail "#{err}" if err?
     generator_path = path.join(__dirname, "mimeo_pdfbeads.rb")
-    args = [generator_path, path.basename(@imgKey),  "-o#{@page}"]
+    #72dpi is sufficient for most displays and 240dpi is sufficient for printing
+    args = [generator_path, path.basename(@imgKey),  "-o#{@page}", "-B", "240", "-d"]
     # execute the mimeo_pdfbeads.rb script via ruby cli. this avoids the need to:
     # -include mimeo_pdfbeads as a executable in this package, which would
     #expose this ugliness to the user
@@ -375,7 +381,6 @@ class Mimeograph
     {jobId, pageNumber, spage} = result
     # add the searchable page to a key
     file2redis spage, key: spage, (err) =>
-    #file2redis spage,  (err) =>
       return @capture err, {jobId: jobId, spage: spage, desc: 'error in Mimeograph.stitch() writing page'} if err?
       # file is written - write the rest to redis
       multi = redis.multi()
