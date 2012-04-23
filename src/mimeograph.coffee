@@ -213,14 +213,7 @@ class PdfStitcher extends Job
     super @context, @callback
     @keys = @key # @keys is an array of redis keys
     @page = "#{_.stripPageNumber @key[0]}.pdf"
-    @args = [
-      '-sPAPERSIZE=letter'
-      '-SDEVICE=pdfwrite'
-      '-dNOPAUSE'
-      '-dBATCH'
-      '-dSAFER'
-      "-sOutputFile=#{@page}"
-    ]
+    @args = ["output", @page]
 
   perform: ->
     log "stitching - #{@jobId}:#{@keys}"
@@ -229,9 +222,9 @@ class PdfStitcher extends Job
       @stitch results
 
   stitch: (pages) ->
-    proc = spawn 'gs', @args.concat(pages)
+    proc = spawn 'pdftk', pages.concat(@args), cwd: path.dirname(@page)
     proc.on 'exit', (code) =>
-      return @fail "gs exit(#{code})" if code isnt 0
+      return @fail "pdftk exit(#{code})" if code isnt 0
       @cleanup pages
       @complete page: @page
 
