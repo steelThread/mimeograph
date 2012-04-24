@@ -332,7 +332,7 @@ class Mimeograph
       when 'hocr'        then @pdf result
       when 'pdf'         then @stitch result
       when 'stitch'      then @complete result
-      when 'lastextract' then @recordText result.jobId, result.key, result.text
+      when 'lastextract' then @recordText result
 
   #
   # Schedule a split job if ocr is required,
@@ -344,11 +344,11 @@ class Mimeograph
   split: (result) ->
     {jobId, key, text} = result
     if text.trim().length
-      recordText jobId, text
+      @recordText result
     else
       @enqueue 'split', key, jobId
 
-  recordText: (jobId, key, text) ->
+  recordText: ({jobId, key, text}) ->
     multi = redis.multi()
     multi.del  key
     multi.hset genkey(jobId), 'text', text
@@ -428,7 +428,7 @@ class Mimeograph
     # TODO need to push a change to redisfs to have more flexibility
     # in the datastructure you want to store files in
     fs.readFile page, "base64", (err, data) =>
-      key = genkey jobId
+      key   = genkey jobId
       field = "outputpdf"
       # TODO only store the doc once - this is a little ugly
       # store the doc in the hset then in the key for the extract job
@@ -470,7 +470,7 @@ class Mimeograph
   # TODO: pretty sure this is never called
   move2hash: (jobId, callback, pages = []) ->
     errorskey = genkey jobId, 'error_pages'
-    multi = redis.multi()
+    multi     = redis.multi()
     multi.zrange  errorskey, 0, -1
     multi.hgetall hashkey
     multi.exec (err, result) =>
