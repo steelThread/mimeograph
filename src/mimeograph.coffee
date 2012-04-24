@@ -1,6 +1,10 @@
 mimeograph         = exports
 mimeograph.version = '1.1.0'
-
+# although pdf beads works with a variety of image types
+# it will only process images with certain extension - regardless
+# of the actual image type.  this happens to be one that pdfbeads
+# plays nicely with
+mimeograph.imageExtension = 'png'
 #
 # Dependencies
 #
@@ -69,8 +73,8 @@ class Extractor extends Job
       @complete text: text
 
 #
-# Split the pdf file into individual .png files using
-# ghostscript.
+# Split the pdf file into individual image files per
+# page using ghostscript.
 #
 # callback will receive a hash with a 'pages' propery
 # containing and array of all the paths produced by
@@ -81,10 +85,11 @@ class Splitter  extends Job
     super @context, @callback
     @basename = _.basename @key
     @args = [
-      '-SDEVICE=pnggray'
+      #jpeg supports color
+      '-SDEVICE=jpeg'
       '-r240x240'
       '-sPAPERSIZE=letter'
-      "-sOutputFile=#{@basename}-%04d.png"
+      "-sOutputFile=#{@basename}-%04d.#{mimeograph.imageExtension}"
       '-dTextAlphaBits=4'
       '-dBATCH'
       '-dNOPAUSE'
@@ -170,7 +175,7 @@ class PageGenerator extends Job
   constructor: (@context, @callback) ->
     super @context, @callback
     @basename = _.basename @key
-    @imgKey = "#{@basename}.png"
+    @imgKey = "#{@basename}.#{mimeograph.imageExtension}"
     @hocrPath = "#{@basename}.hocr"
     @page = "#{@basename}.pdf"
 
@@ -189,7 +194,8 @@ class PageGenerator extends Job
   generate: (err) =>
     return @fail "#{err}" if err?
     generator_path = path.join(__dirname, "mimeo_pdfbeads.rb")
-    args = [generator_path, path.basename(@imgKey),  "-o#{@page}"]
+    #72dpi is sufficient for most displays and 240dpi is sufficient for printing
+    args = [generator_path, path.basename(@imgKey),  "-o#{@page}", "-B", "240", "-d"]
     # execute the mimeo_pdfbeads.rb script via ruby cli. this avoids the need to:
     # -include mimeo_pdfbeads as a executable in this package, which would
     #expose this ugliness to the user
@@ -326,26 +332,29 @@ class Mimeograph
       when 'hocr'        then @pdf result
       when 'pdf'         then @stitch result
       when 'stitch'      then @complete result
-      when 'lastextract' then @split result, true
+      when 'lastextract' then @recordText result
 
   #
   # Schedule a split job if ocr is required,
   # ie the extract step didn't produce any text.
-  # If ocr isn't required job is finished and
+  # If ocr isn't required the job is finished and
   # the text is set in the text key for the
   # job.
   #
-  split: (result, bypass = false) ->
+  split: (result) ->
     {jobId, key, text} = result
-    if text.trim().length || bypass
-      multi = redis.multi()
-      multi.del  key
-      multi.hset genkey(jobId), 'text', text
-      multi.exec (err, result) =>
-        return @capture err, result if err?
-        @finalize jobId
+    if text.trim().length
+      @recordText result
     else
       @enqueue 'split', key, jobId
+
+  recordText: ({jobId, key, text}) ->
+    multi = redis.multi()
+    multi.del  key
+    multi.hset genkey(jobId), 'text', text
+    multi.exec (err, result) =>
+      return @capture err, result if err?
+      @finalize jobId
 
   #
   # Set the number of pages that came out of the
@@ -375,7 +384,6 @@ class Mimeograph
     {jobId, pageNumber, spage} = result
     # add the searchable page to a key
     file2redis spage, key: spage, (err) =>
-    #file2redis spage,  (err) =>
       return @capture err, {jobId: jobId, spage: spage, desc: 'error in Mimeograph.stitch() writing page'} if err?
       # file is written - write the rest to redis
       multi = redis.multi()
@@ -393,7 +401,7 @@ class Mimeograph
   # finalize if so.
   #
   checkComplete: (jobId, baseKey, processed, total) ->
-    # if all inidivual pages have been processed
+    # if all individual pages have been processed
     if processed is total
       # stitch the pages together
       @gatherSPages jobId, baseKey, (results) =>
@@ -420,7 +428,7 @@ class Mimeograph
     # TODO need to push a change to redisfs to have more flexibility
     # in the datastructure you want to store files in
     fs.readFile page, "base64", (err, data) =>
-      key = genkey jobId
+      key   = genkey jobId
       field = "outputpdf"
       # TODO only store the doc once - this is a little ugly
       # store the doc in the hset then in the key for the extract job
@@ -443,7 +451,7 @@ class Mimeograph
       @notify job
 
   #
-  # Attempt to notify clients about job completness.
+  # Attempt to notify clients about job completeness.
   # In the event where there were no subscribers
   # add the job to the completed set.  Sort of a poor
   # mans durability solution.
@@ -459,9 +467,10 @@ class Mimeograph
   # (page number) and pushes them into a key into the job's hashs.
   # Optionally moves the 'error_pages' list if there were errors.
   #
+  # TODO: pretty sure this is never called
   move2hash: (jobId, callback, pages = []) ->
     errorskey = genkey jobId, 'error_pages'
-    multi = redis.multi()
+    multi     = redis.multi()
     multi.zrange  errorskey, 0, -1
     multi.hgetall hashkey
     multi.exec (err, result) =>
