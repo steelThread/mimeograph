@@ -64,7 +64,8 @@ pdfargs  = Hash[
   :labels         => nil,
   :toc            => nil,
   :pagelayout     => 'TwoPageRight',
-  :meta           => nil
+  :meta           => nil,
+  :delfiles       => false
 ]
 pageargs = Hash[
   :threshold       => 1,
@@ -191,6 +192,10 @@ OptionParser.new() do |opts|
   opts.separator "\n"
   opts.separator "General options:\n"
 
+  opts.on("-d", "--delete",
+                "Delete intermediate image files used to create PDF") do |d|
+    pdfargs[:delfiles] = d
+  end
   opts.on("-o", "--output FILE",
                 "Print output to a file instead of STDERR") do |f|
     outpath = f

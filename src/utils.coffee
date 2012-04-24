@@ -6,6 +6,7 @@ puts           = console.log
 exports.log       = (msg) -> log msg.green
 exports.log.warn  = (msg) -> log msg.yellow
 exports.log.err   = (msg) -> log msg.red
+exports.log.debug = (msg) -> log msg.blue
 
 exports.puts        = (obj) -> puts stringify obj
 exports.puts.green  = (obj) -> puts stringify(obj).green
