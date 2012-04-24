@@ -325,7 +325,6 @@ class Mimeograph
   # Orchestrates the job steps.
   #
   success: (worker, queue, job, result) =>
-    #log "success called #{require('util').inspect worker}:#{queue}:#{job.class}:#{require('util').inspect result}:"
     switch job.class
       when 'extract'     then @split result
       when 'split'       then @hocr result
@@ -386,15 +385,22 @@ class Mimeograph
     file2redis spage, key: spage, (err) =>
       return @capture err, {jobId: jobId, spage: spage, desc: 'error in Mimeograph.stitch() writing page'} if err?
       # file is written - write the rest to redis
-      multi = redis.multi()
-      # increment the number of pages processed by one
-      multi.hincrby genkey(jobId), 'num_processed', 1
-      # fetch total number of pages in the pdf
-      multi.hget    genkey(jobId), 'num_pages'
-      multi.exec (err, results) =>
-        return @capture err, result if err?
-        [processed, total] = results
-        @checkComplete jobId, _.stripPageNumber(spage), processed, parseInt total
+      @recordPageComplete jobId, _.stripPageNumber(spage)
+
+  #
+  # Record the completion of a page and then determine if
+  # page processing has been completed.
+  #
+  recordPageComplete: (jobId, baseKey) ->
+    multi = redis.multi()
+    # increment the number of pages processed by one
+    multi.hincrby genkey(jobId), 'num_processed', 1
+    # fetch total number of pages in the pdf
+    multi.hget    genkey(jobId), 'num_pages'
+    multi.exec (err, results) =>
+      return @capture err, results if err?
+      [processed, total] = results
+      @checkComplete jobId, baseKey, processed, parseInt total
 
   #
   # Determine if all the pages have been processed and
@@ -403,11 +409,14 @@ class Mimeograph
   checkComplete: (jobId, baseKey, processed, total) ->
     # if all individual pages have been processed
     if processed is total
-      # stitch the pages together
-      @gatherSPages jobId, baseKey, (results) =>
-        pages = []
-        pages.push spage for spage in results.sort()
-        @enqueue 'stitch', pages, jobId
+      #is count of error pages equal to total
+      errorskey = genkey jobId, 'error_pages'
+      redis.zcount errorskey, "-inf", "+inf", (err, results) =>
+        return @capture err, results if err?
+        return @fatalError jobId, "Recorded failure for every page" if total is parseInt(results)
+        # stitch the pages together
+        @gatherSPages jobId, baseKey, (results) =>
+          @enqueue 'stitch', results.sort(), jobId
 
   #
   # Collect the keys for searchable pages generated for this
@@ -415,9 +424,10 @@ class Mimeograph
   # array of keys.
   #
   gatherSPages: (jobId, baseKey, callback) ->
+    pdfFile = /.*\.pdf$/
     redis.keys "#{baseKey}*", (err, results) =>
       return @capture err, {jobId: jobId} if err?
-      callback results
+      callback (result for result in results when pdfFile.test(result))
 
   #
   # Once the searchable pdf is ready this method will
@@ -441,14 +451,23 @@ class Mimeograph
   # Wrap up the job and publish a notification
   #
   finalize: (jobId) ->
-    job = genkey jobId
-    multi = redis.multi()
-    multi.hset job, 'ended', _.now()
-    multi.hset job, 'status', 'complete'
-    multi.hdel job, 'num_processed'
-    multi.exec (err, results) =>
-      return @capture err, result if err?
-      @notify job
+    #gather data from error page sorted set
+    errorskey = genkey jobId, 'error_pages'
+    redis.zrange errorskey, 0, -1, (err, errors) =>
+      return @capture err, {jobId: jobId} if err?
+      multi = redis.multi()
+      job   = genkey jobId
+      multi = redis.multi()
+      # delete data in error page sorted set
+      multi.del  errorskey, errorskey
+      # denote error pages in final results hash
+      multi.hset job, 'error_pages', errors.join ',' unless _.isEmpty errors
+      multi.hset job, 'ended', _.now()
+      multi.hset job, 'status', 'complete'
+      multi.hdel job, 'num_processed'
+      multi.exec (err, results) =>
+        return @capture err, result if err?
+        @notify job
 
   #
   # Attempt to notify clients about job completeness.
@@ -460,28 +479,6 @@ class Mimeograph
     redis.publish job, "#{job}:#{status}", (err, subscribers) =>
       return @capture err, result if err?
       redis.sadd genkey('completed'), job  unless subscribers
-
-  #
-  # Moves the hash that contains the resulting ocr'd text into
-  # the 'text' field in the result hash.  Sorts on the fields
-  # (page number) and pushes them into a key into the job's hashs.
-  # Optionally moves the 'error_pages' list if there were errors.
-  #
-  # TODO: pretty sure this is never called
-  move2hash: (jobId, callback, pages = []) ->
-    errorskey = genkey jobId, 'error_pages'
-    multi     = redis.multi()
-    multi.zrange  errorskey, 0, -1
-    multi.hgetall hashkey
-    multi.exec (err, result) =>
-      return callback err, {jobId: jobId} if err?
-      [errors, hash] = result[0...]
-      pages.push hash[field] for field in _.keys(hash).sort()
-      multi = redis.multi()
-      multi.del  hashkey, errorskey
-      multi.hset genkey(jobId), 'text', pages.join '\f'
-      multi.hset genkey(jobId), 'error_pages', errors.join ',' unless _.isEmpty errors
-      multi.exec (err) => callback err
 
   #
   # Pushes a job onto the queue.  Each job receives a
@@ -513,25 +510,49 @@ class Mimeograph
   # the other classes of jobs fail and publish the failed message.
   #
   error: (error, worker, queue, job) =>
-    jobId = job.args[0].jobId
-    if job.class is 'ocr'
-      pageNumber = _.pageNumber(job.args[0].key)
-      log.err "error       - #{jobId} #{job.class} page: #{pageNumber}"
-      redis.zadd genkey(jobId, 'error_pages'), pageNumber, pageNumber, (err) =>
-        return @capture err if err?
-        @finish _.extend job,
-          jobId      : jobId
-          pageNumber : pageNumber
-          text       : ''
+    if job?
+      if job.class in ['hocr','pdf']
+        @handlePageJobError job
+      else
+        jobId = job.args[0].jobId
+        log.err "error       - #{jobId} #{job.class}"
+        @fatalError jobId, JSON.stringify _.extend(job, error)
+    #if there is an error starting up (e.g. redis is unreachable) job is null
     else
-      log.err "error       - #{jobId} #{job.class}"
-      multi = redis.multi()
-      multi.del  @filename jobId
-      multi.hset genkey(jobId), 'status', 'failed'
-      multi.hset genkey(jobId), 'error' , JSON.stringify _.extend(job, error)
-      multi.exec (err) =>
-        return @capture err, {jobId: jobId} if err?
-        @notify genkey(jobId), 'fail'
+      log.err "error       - #{error}"
+
+  #
+  # Handler for job errors that impact a single page and that should not cause
+  # the discontinuation of processing.
+  #
+  handlePageJobError: (job) =>
+    jobId = job.args[0].jobId
+    pageNumber = _.pageNumber(job.args[0].key)
+    log.err "error       - #{jobId} #{job.class} page: #{pageNumber}"
+    errorsKey = genkey jobId, 'error_pages'
+    redis.zadd errorsKey, pageNumber, pageNumber, (err) =>
+      return @capture err if err?
+      @recordPageComplete jobId, _.stripPageNumber(job.args[0].key)
+
+  #
+  # Finalizes a job due to errors that should cause the discontinuation of
+  # processing.
+  #
+  # Although this may kill the current resque job, and result in the
+  # client receiving a fail notification, there may be other resque jobs queued
+  # up related to the same source PDF.  those other resque jobs will still be
+  # processed.
+  #
+  # TODO - clean up other related resque jobs with a related jobId
+  #
+  fatalError: (jobId, errorMessage) ->
+    multi = redis.multi()
+    multi.del  @filename jobId
+    multi.hset genkey(jobId), 'status', 'failed'
+    multi.hset genkey(jobId), 'error' , errorMessage
+    multi.exec (err) =>
+      return @capture err, {jobId: jobId} if err?
+      @notify genkey(jobId), 'fail'
 
   #
   # Construct the named resque workers that carry out
