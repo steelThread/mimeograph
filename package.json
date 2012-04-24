@@ -22,7 +22,8 @@
     "colors"        : ">= 0.3.0",
     "coffee-resque" : ">= 0.1.4",
     "redisfs"       : ">= 1.0.0",
-    "async"         : ">= 0.1.15"
+    "async"         : ">= 0.1.15",
+    "pkginfo"       : ">= 0.2.3"
   },
   "devDependencies": {
     "vows"          : ">= 0.6.1",

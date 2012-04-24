@@ -1,10 +1,3 @@
-mimeograph         = exports
-mimeograph.version = '1.1.0'
-# although pdf beads works with a variety of image types
-# it will only process images with certain extension - regardless
-# of the actual image type.  this happens to be one that pdfbeads
-# plays nicely with
-mimeograph.imageExtension = 'png'
 #
 # Dependencies
 #
@@ -15,6 +8,15 @@ resque         = require 'coffee-resque'
 {_, log, puts} = require './utils'
 async          = require 'async'
 path           = require 'path'
+pkginfo        = require('pkginfo')(module)
+
+mimeograph         = exports
+mimeograph.version = module.exports.version
+# although pdf beads works with a variety of image types
+# it will only process images with certain extension - regardless
+# of the actual image type.  this happens to be one that pdfbeads
+# plays nicely with
+mimeograph.imageExtension = 'png'
 
 #
 # export to global scope.  not ideal.
