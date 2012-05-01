@@ -48,10 +48,46 @@ class Job
   fail: (err) ->
     @callback if _.isString err then new Error err else err
 
+  #
+  # thin wrapper around child_processes.spawn.  will capture error output
+  # during execution of child process and log that output to error if the
+  # child_process returns with a code other than 0. regardless of the code
+  # value, the onExitCallback passed into this method will be evaluated
+  # when the error log has been completed.
+  #
+  # unlike the original child_process.spawn args & options should be passed
+  # in the settings object as values for the keys "args" and "options"
+  # respectively. the settings argument is optional and if it is passed the
+  # "args" and options" keys are still optional.
+  #
+  spawn: (command, settings..., onExitCallback) ->
+    if settings.length
+      settings = settings[0]
+    else
+      settings = {}
+    commandInfo = "#{command} #{_.stringify settings}"
+    if settings.options?
+      proc = spawn command, settings.args, settings.options
+    else
+      proc = spawn command, settings.args
+
+    proc.stderr.on 'data', (data) ->
+      @errorData = [] unless @errorData?
+      @errorData.push data
+
+    proc.on 'exit', (code) ->
+      # handle error - have to check code & errorData because pdfbeads output
+      # what appears to be non-error info to stderr.
+      if @errorData && code
+        log.err "failure running #{commandInfo}"
+        log.err "#{error}" for error in @errorData
+      #pass control back to original callback
+      onExitCallback code
+
 #
 # Extract the text from the pdf using pdftotext.
 #
-# callback will receive a hash with a 'text' field containing
+# callback will receiver a hash with a 'text' field containing
 # the accumlated text found in the pdf.
 #
 class Extractor extends Job
@@ -62,9 +98,8 @@ class Extractor extends Job
       @extract()
 
   extract: ->
-    proc = spawn 'pdftotext', [@key]
-    proc.on 'exit', (code) =>
-      return @fail "pdftotext exit(#{code})" if code isnt 0
+    proc = @spawn 'pdftotext', args:[@key], (code) =>
+      return @fail "pdftotext exit(#{code})" if code
       @fetchText()
 
   fetchText: ->
@@ -107,9 +142,8 @@ class Splitter  extends Job
       @split()
 
   split: ->
-    proc = spawn 'gs', @args
-    proc.on 'exit', (code) =>
-      return @fail "gs exit(#{code})" if code isnt 0
+    proc = @spawn 'gs', args: @args, (code) =>
+      return @fail "gs exit(#{code})" if code
       @fetchPages()
 
   fetchPages: ->
@@ -152,9 +186,8 @@ class Recognizer extends Job
   recognize: ->
     jobStatus @jobId, (status) =>
       if status isnt 'fail'
-        proc = spawn 'tesseract', @args
-        proc.on 'exit', (code) =>
-          return @fail "tesseract exit(#{code})" if code isnt 0
+        proc = @spawn 'tesseract', args:@args, (code) =>
+          return @fail "tesseract exit(#{code})" if code
           @fetchText()
       else
         fs.unlink @key
@@ -202,9 +235,8 @@ class PageGenerator extends Job
     # -include mimeo_pdfbeads as a executable in this package, which would
     #expose this ugliness to the user
     # -having to ensure that mimeo_pdfbeads has executable permission
-    proc = spawn "ruby", args, cwd: path.dirname(@imgKey)
-    proc.on 'exit', (code) =>
-      return @fail "pdfbeads exit(#{code})" if code isnt 0
+    proc = @spawn "ruby", args:args, options: {cwd: path.dirname(@imgKey)}, (code) =>
+      return @fail "pdfbeads exit(#{code})" if code
       fs.unlink file for file in [@imgKey, @hocrPath]
       # not returning contents of @page - just the file path
       @complete spage: @page, pageNumber: _.pageNumber @page
@@ -230,9 +262,8 @@ class PdfStitcher extends Job
       @stitch results
 
   stitch: (pages) ->
-    proc = spawn 'pdftk', pages.concat(@args), cwd: path.dirname(@page)
-    proc.on 'exit', (code) =>
-      return @fail "pdftk exit(#{code})" if code isnt 0
+    proc = @spawn 'pdftk', args: pages.concat(@args), options: {cwd: path.dirname(@page)}, (code) =>
+      return @fail "pdftk exit(#{code})" if code
       @cleanup pages
       @complete page: @page
 
@@ -478,6 +509,7 @@ class Mimeograph
   # mans durability solution.
   #
   notify: (job, status = 'complete') ->
+    log "notifying #{job} #{status}"
     redis.publish job, "#{job}:#{status}", (err, subscribers) =>
       return @capture err, result if err?
       redis.sadd genkey('completed'), job  unless subscribers
