@@ -1,6 +1,6 @@
 {
   "name": "mimeograph",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "CoffeeScript lib for PDF OCR and text extraction.",
   "keywords": ["node", "pdf", "ocr", "hocr", "coffeescript", "resque", "text extraction", "indexing"],
   "homepage": "https://github.com/steelThread/mimeograph",
