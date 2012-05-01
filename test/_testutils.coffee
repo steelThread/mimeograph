@@ -28,6 +28,8 @@ switches = [
   ['-r', '--redis [hostcolonport]', 'host:port for redis. can be specified as:
  <host>:<port>, <host> or :<port>. In left unspecified the default host and port
  will be used.']
+  ['-q', '--quiet', 'When used in conjunction with -l, this will supress text
+ and will not copy the outputpdf returned by mimeograph.']
 ]
 
 class CleanupRedis
@@ -39,7 +41,7 @@ class CleanupRedis
       client.quit()
 
 class Listener
-  constructor: (redisConfig)->
+  constructor: (redisConfig, @quiet)->
     # access redis
     @psClient = redisConfig.createClient()
     @client = redisConfig.createClient()
@@ -61,10 +63,14 @@ class Listener
     @client.hgetall channel, (err, hash) =>
       return log.err "error retrieving hash #{message}: #{err}" if err?
       if hash.outputpdf? #copy results out
-        @processOutputPdf hash, message
+        if @quiet
+          hash.outputpdf = 'this has been supressed'
+        else
+          @processOutputPdf hash, message
       else
        log.warn "no outputpdf available for #{message}"
 
+      hash.text = "text suppressed. was #{hash.text.length} char(s) long." if @quiet
       log util.inspect hash
 
   processOutputPdf: (hash, message) ->
@@ -114,7 +120,6 @@ class KickStart
       mimeograph.process [jobId, tmpTargetFile], redisConfig.host, redisConfig.port
 
   @copy: (sourceFile, targetFile, callback) ->
-    log "in copy"
     readStream = fs.createReadStream sourceFile
     writeStream = fs.createWriteStream targetFile
     readStream.on 'end', ->
@@ -162,7 +167,7 @@ testutils.run = ->
     process.exit()
 
   if options.listen
-    new Listener(new RedisConfig(options.redis)).listen()
+    new Listener(new RedisConfig(options.redis), options.quiet).listen()
 
   if options.cleanup
     CleanupRedis.cleanup(new RedisConfig(options.redis))
