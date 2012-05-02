@@ -2,8 +2,8 @@
 .settings
 .project
 lib
-test/*.pdf
 node_modules
 *.log
-test/outputpdf
+test/outputpdf/*
+test/test_resources/*
 dump.rdb
