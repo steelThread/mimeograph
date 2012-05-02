@@ -60,16 +60,10 @@ class Job
   # respectively. the settings argument is optional and if it is passed the
   # "args" and options" keys are still optional.
   #
-  spawn: (command, settings..., onExitCallback) ->
-    if settings.length
-      settings = settings[0]
-    else
-      settings = {}
-    commandInfo = "#{command} #{_.stringify settings}"
-    if settings.options?
-      proc = spawn command, settings.args, settings.options
-    else
-      proc = spawn command, settings.args
+  spawn: (command, settings..., callback) ->
+    settings = settings[0] || {}
+    commandInfo = "#{command} #{JSON.stringify settings}"
+    proc = spawn command, settings.args, settings.options
 
     proc.stderr.on 'data', (data) ->
       @errorData = [] unless @errorData?
@@ -82,12 +76,12 @@ class Job
         log.err "failure running #{commandInfo}"
         log.err "#{error}" for error in @errorData
       #pass control back to original callback
-      onExitCallback code
+      callback code
 
 #
 # Extract the text from the pdf using pdftotext.
 #
-# callback will receiver a hash with a 'text' field containing
+# callback will receive a hash with a 'text' field containing
 # the accumlated text found in the pdf.
 #
 class Extractor extends Job

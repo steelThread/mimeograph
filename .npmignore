@@ -3,3 +3,6 @@
 *.md
 Makefile
 /src
+*.log
+test/
+dump.rdb
