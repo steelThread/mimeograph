@@ -104,8 +104,8 @@ class Extractor extends Job
       @complete text: text
 
 #
-# Split the pdf file into individual image files per
-# page using ghostscript.
+# Split the pdf file into individual pdf files with 1
+# page each using pdftk burst.
 #
 # callback will receive a hash with a 'pages' propery
 # containing and array of all the paths produced by
@@ -116,17 +116,10 @@ class Splitter  extends Job
     super @context, @callback
     @basename = _.basename @key
     @args = [
-      #jpeg supports color
-      '-SDEVICE=jpeg'
-      '-r240x240'
-      '-sPAPERSIZE=letter'
-      "-sOutputFile=#{@basename}-%04d.#{mimeograph.imageExtension}"
-      '-dTextAlphaBits=4'
-      '-dBATCH'
-      '-dNOPAUSE'
-      '-dSAFER'
-      '--'
-      @key
+      @key,
+      "burst",
+      "output",
+      "#{@basename}-%04d.pdf"
     ]
 
   perform: ->
@@ -136,8 +129,8 @@ class Splitter  extends Job
       @split()
 
   split: ->
-    proc = @spawn 'gs', args: @args, (code) =>
-      return @fail "gs exit(#{code})" if code
+    proc = @spawn 'pdftk', args: @args, (code) =>
+      return @fail "pdftk exit(#{code})" if code
       @fetchPages()
 
   fetchPages: ->
@@ -150,6 +143,45 @@ class Splitter  extends Job
   findPages: (basename, file) ->
     basename = basename.substr basename.lastIndexOf('/') + 1
     @pages.push "/tmp/#{file}" if file.match "^#{basename}-{1}"
+
+#
+# Convert a one page pdf into a single image using
+# Ghostscript
+#
+# callback will receive the path to the image
+# created by ghostscript.
+class Converter extends Job
+  constructor: (@context, @callback) ->
+    super @context, @callback
+    @image = "#{_.basename @key}.#{mimeograph.imageExtension}"
+    @args = [
+      '-SDEVICE=jpeg',
+      '-sPAPERSIZE=letter',
+      "-sOutputFile=#{@image}",
+      '-dTextAlphaBits=4',
+      '-dBATCH',
+      '-dNOPAUSE',
+      '-dSAFER',
+      '--'
+      @key
+    ]
+
+  perform: ->
+    log "converting   - #{@key}"
+    redis2file @key, file: @key, (err) =>
+      return @fail err if err?
+      @split()
+
+  split: ->
+    proc = @spawn 'gs', args: @args, (code) =>
+      return @fail "gs exit(#{code})" if code
+      @fetchPage()
+
+  fetchPage: ->
+    path.exists @image, (exists) =>
+      return @fail "@image file was not found" unless exists
+      @complete image: @image
+      fs.unlink 'doc_data.txt' #metadata file created by pdftk burst
 
 #
 # Recognize (ocr) the text, in hocr format, from the images using
@@ -273,6 +305,7 @@ class PdfStitcher extends Job
 jobs =
   extract       : (context, callback) -> new Extractor(context, callback).perform()
   split         : (context, callback) -> new Splitter(context, callback).perform()
+  convert       : (context, callback) -> new Converter(context, callback).perform()
   hocr          : (context, callback) -> new Recognizer(context, callback).perform()
   pdf           : (context, callback) -> new PageGenerator(context, callback).perform()
   stitch        : (context, callback) -> new PdfStitcher(context, callback).perform()
@@ -354,7 +387,8 @@ class Mimeograph
   success: (worker, queue, job, result) =>
     switch job.class
       when 'extract'     then @split result
-      when 'split'       then @hocr result
+      when 'split'       then @convert result
+      when 'convert'     then @hocr result
       when 'hocr'        then @pdf result
       when 'pdf'         then @stitch result
       when 'stitch'      then @complete result
@@ -385,13 +419,20 @@ class Mimeograph
   #
   # Set the number of pages that came out of the
   # split step.  For each split file store the
-  # the file in redis and schedule an hocr job.
+  # the file in redis and schedule an convert job.
   #
-  hocr: (result) ->
+  convert: (result) ->
     {jobId, pages} = result
     redis.hset genkey(jobId), 'num_pages', pages.length, (err) =>
       return @capture err, result if err?
-      @storeAndEnqueue page, 'hocr', jobId for page in pages
+      @storeAndEnqueue page, 'convert', jobId for page in pages
+
+  #
+  # Store the image and in redis and schedule an hocr job.
+  #
+  hocr: (result) ->
+    {jobId, image} = result
+    @storeAndEnqueue image, 'hocr', jobId
 
   #
   # Store the hocr result in redis and schedule a pdf
