@@ -92,7 +92,6 @@ class Extractor extends Job
       @extract()
 
   extract: ->
-    return @fail "forced error"
     proc = @spawn 'pdftotext', args:[@key], (code) =>
       return @fail "pdftotext exit(#{code})" if code
       @fetchText()
