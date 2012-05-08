@@ -72,9 +72,9 @@ class Job
     proc.on 'exit', (code) ->
       # handle error - have to check code & errorData because pdfbeads output
       # what appears to be non-error info to stderr.
-      if @errorData && code
+      if code
         log.err "failure running #{commandInfo}"
-        log.err "#{error}" for error in @errorData
+        log.err "#{error}" for error in @errorData if @errorData
       #pass control back to original callback
       callback code
 
@@ -92,6 +92,7 @@ class Extractor extends Job
       @extract()
 
   extract: ->
+    return @fail "forced error"
     proc = @spawn 'pdftotext', args:[@key], (code) =>
       return @fail "pdftotext exit(#{code})" if code
       @fetchText()
@@ -224,7 +225,7 @@ class PageGenerator extends Job
     return @fail "#{err}" if err?
     generator_path = path.join(__dirname, "mimeo_pdfbeads.rb")
     #72dpi is sufficient for most displays and 240dpi is sufficient for printing
-    args = [generator_path, path.basename(@imgKey),  "-o#{@page}", "-B", "240", "-d"]
+    args = [generator_path, path.basename(@imgKey),  "-o", "#{@page}", "-B", "240", "-d"]
     # execute the mimeo_pdfbeads.rb script via ruby cli. this avoids the need to:
     # -include mimeo_pdfbeads as a executable in this package, which would
     #expose this ugliness to the user
@@ -543,8 +544,12 @@ class Mimeograph
         @handlePageJobError job
       else
         jobId = job.args[0].jobId
-        log.err "error       - #{jobId} #{job.class}"
-        @fatalError jobId, JSON.stringify _.extend(job, error)
+        log.err "error       - #{jobId} #{job.class} #{error}"
+        # error coming back from CoffeeResque is going to be an instance
+        # of Error - lets attach its contents to the job so that
+        # the published failure is a little more descriptive
+        job.error = error.toString()
+        @fatalError jobId, JSON.stringify job
     #if there is an error starting up (e.g. redis is unreachable) job is null
     else
       log.err "error       - #{error}"
@@ -552,6 +557,9 @@ class Mimeograph
   #
   # Handler for job errors that impact a single page and that should not cause
   # the discontinuation of processing.
+  #
+  # TODO: if a one page doc fails during pagegeneration i don't believe
+  # that mimeo will publish the failure.
   #
   handlePageJobError: (job) =>
     jobId = job.args[0].jobId
