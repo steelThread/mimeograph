@@ -15,7 +15,8 @@ mimeograph.version = module.exports.version
 # although pdf beads works with a variety of image types
 # it will only process images with certain extension - regardless
 # of the actual image type.  this happens to be one that pdfbeads
-# plays nicely with
+# plays nicely with. i have submitted a ticket with pdfbeads about
+# this and will remove when it is fixed.
 mimeograph.imageExtension = 'png'
 
 #
