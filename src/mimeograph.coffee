@@ -116,9 +116,9 @@ class Splitter  extends Job
     super @context, @callback
     @basename = _.basename @key
     @args = [
-      @key,
-      "burst",
-      "output",
+      @key
+      "burst"
+      "output"
       "#{@basename}-%04d.pdf"
     ]
 
@@ -155,14 +155,14 @@ class Converter extends Job
     super @context, @callback
     @image = "#{_.basename @key}.#{mimeograph.imageExtension}"
     @args = [
-      '-SDEVICE=jpeg',
-      '-sPAPERSIZE=letter',
-      '-r240x240',
-      "-sOutputFile=#{@image}",
-      '-dTextAlphaBits=4',
-      '-dBATCH',
-      '-dNOPAUSE',
-      '-dSAFER',
+      '-SDEVICE=jpeg'
+      '-sPAPERSIZE=letter'
+      '-r240x240'
+      "-sOutputFile=#{@image}"
+      '-dTextAlphaBits=4'
+      '-dBATCH'
+      '-dNOPAUSE'
+      '-dSAFER'
       '--'
       @key
     ]
@@ -199,8 +199,8 @@ class Recognizer extends Job
     #hocr generates file with html extension
     @file      = "#{basename}.html"
     @args = [
-      @key,
-      basename,
+      @key
+      basename
       "+#{__dirname}/tesseract_hocr_config.txt"
     ]
 
@@ -295,10 +295,10 @@ class PdfLayer extends Job
     # output file name needs to be different from source files
     @layeredPage = "#{_.basename @key}.lpdf"
     @args = [
-      @foregroundPage,
-      "background",
-      @backgroundPage,
-      "output",
+      @foregroundPage
+      "background"
+      @backgroundPage
+      "output"
       @layeredPage
     ]
 
@@ -333,7 +333,7 @@ class PdfStitcher extends Job
     @args = ["output", @page]
 
   perform: ->
-    log "stitching - #{@jobId}:#{@keys}"
+    log "stitching - #{@jobId} #{@keys}"
     async.map @keys, @fetchPage, (err, results) =>
       return @fail err if err?
       @stitch results
