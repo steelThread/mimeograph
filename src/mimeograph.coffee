@@ -289,28 +289,28 @@ class PageGenerator extends Job
 class PdfLayer extends Job
   constructor: (@context, @callback) ->
     super @context, @callback
-    # derive sPage and oPage from key
-    @sPage = @key
-    @oPage = "#{_.basename @key}.pdf"
-    # TODO not sure what would happen if we just reused @oPage
+    # derive backgroundPage and foregroundPage from key
+    @backgroundPage = @key
+    @foregroundPage = "#{_.basename @key}.pdf"
+    # output file name needs to be different from source files
     @layeredPage = "#{_.basename @key}.lpdf"
     @args = [
-      @oPage,
+      @foregroundPage,
       "background",
-      @sPage,
+      @backgroundPage,
       "output",
       @layeredPage
     ]
 
   perform: ->
     log "layering  - #{@key}"
-    async.forEach [@sPage, @oPage], @fileFetcher, @layer
+    async.forEach [@backgroundPage, @foregroundPage], @fileFetcher, @layer
 
-  layer: (err)=>
+  layer: (err) =>
     return @fail err if err?
     proc = @spawn "pdftk", args: @args, (code) =>
       return @fail "pdftk exit(#{code})" if code
-      fs.unlink file for file in [@oPage, @sPage]
+      fs.unlink file for file in [@backgroundPage, @foregroundPage]
       @complete page: @layeredPage, pageNumber: _.pageNumber @layeredPage
 
   fileFetcher: (key, callback) ->
