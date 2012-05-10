@@ -6,13 +6,13 @@
 
 testutils = exports
 
-fs             = require 'fs'
-{puts, log}    = require '../src/utils'
-{OptionParser} = require 'coffee-script/lib/coffee-script/optparse'
-mimeograph     = require '../src/mimeograph'
-redis          = require 'redis'
-util           = require 'util'
-path           = require 'path'
+fs                    = require 'fs'
+{puts, log, copyFile} = require '../src/utils'
+{OptionParser}        = require 'coffee-script/lib/coffee-script/optparse'
+mimeograph            = require '../src/mimeograph'
+redis                 = require 'redis'
+util                  = require 'util'
+path                  = require 'path'
 
 usage = '''
   Usage:
@@ -78,7 +78,7 @@ class Listener
     hash.outputpdf = "output present and #{outputpdf.length} char(s) long"
     #perhaps we should put this in userhome
     pdfDir = "#{__dirname}/outputpdf"
-    pdf = "#{pdfDir}/#{message}.pdf"
+    pdf = "#{pdfDir}/#{message.replace /:/g, '_'}.pdf"
     path.exists pdfDir, (exists) =>
       if exists # make sure it is a dir and write to it
         fs.stat pdfDir, (err, stats) =>
@@ -90,10 +90,10 @@ class Listener
           return log.err if err?
           @writePdf pdf, outputpdf, message
 
-  writePdf: (pdf, outputpdf, message) ->
-    fs.writeFile pdf, outputpdf, "base64", (err) =>
-      return log.err "error writing out outputpdf for #{message} to #{pdf}: #{err}" if err?
-      log "wrote outputpdf for #{message} to #{pdf}"
+  writePdf: (path, content, message) ->
+    fs.writeFile path, content, "base64", (err) =>
+      return log.err "error writing file for #{message} to #{path}: #{err}" if err?
+      log "wrote contents of #{message} to #{path}"
 
   unboundEnd: ->
     log.warn "shutting down"
@@ -115,27 +115,16 @@ class KickStart
 
     stats = fs.lstatSync sourceFile
     log "size of #{sourceFile}: #{stats.size}"
-    @copy sourceFile, tmpTargetFile, () ->
+    copyFile sourceFile, tmpTargetFile, (err) ->
+      return log.err err if err?
       log "process: [#{jobId}, #{tmpTargetFile}]"
       mimeograph.process [jobId, tmpTargetFile], redisConfig.host, redisConfig.port
-
-  @copy: (sourceFile, targetFile, callback) ->
-    readStream = fs.createReadStream sourceFile
-    writeStream = fs.createWriteStream targetFile
-    readStream.on 'end', ->
-      log "finished copying #{sourceFile} to #{targetFile}"
-      callback()
-    readStream.on 'error', (err)->
-      log.err "error reading from #{sourceFile}: #{err}"
-    writeStream.on 'error', (err)->
-      log.err "error writing from #{targetFile}: #{err}"
-    readStream.pipe writeStream
 
 class RedisConfig
   constructor: (configString)->
     configString = '' unless configString?
     semiPosition = configString.indexOf ':'
-    if semiPosition  == -1 #only host name
+    if semiPosition == -1 #only host name
       @host = configString
     else if semiPosition == 0 #only port
       @port = configString.substr 1
