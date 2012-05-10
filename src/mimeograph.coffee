@@ -304,24 +304,18 @@ class PdfLayer extends Job
 
   perform: ->
     log "layering  - #{@key}"
-    async.parallel [@fetchSearchablePage, @fetchOriginalPage], (err, results) =>
-      return @fail err if err?
-      @layer()
+    async.forEach [@sPage, @oPage], @fileFetcher, @layer
 
-  layer: =>
+  layer: (err)=>
+    return @fail err if err?
     proc = @spawn "pdftk", args: @args, (code) =>
       return @fail "pdftk exit(#{code})" if code
       fs.unlink file for file in [@oPage, @sPage]
       @complete page: @layeredPage, pageNumber: _.pageNumber @layeredPage
 
-  fetchSearchablePage: (callback) =>
-    redis2file @sPage, file: @sPage, (err) =>
-      log.err "error accessing #{@sPage}" if err?
-      callback err
-
-  fetchOriginalPage: (callback) =>
-    redis2file @oPage, file: @oPage, (err) =>
-      log.err "error accessing #{@oPage}" if err?
+  fileFetcher: (key, callback) ->
+    redis2file key, file: key, (err) =>
+      log.err "error accessing #{key}" if err?
       callback err
 
 #
