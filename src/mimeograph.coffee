@@ -151,6 +151,7 @@ class Splitter  extends Job
 #
 # callback will receive the path to the image
 # created by ghostscript.
+#
 class Converter extends Job
   constructor: (@context, @callback) ->
     super @context, @callback
@@ -642,7 +643,7 @@ class Mimeograph
   #
   error: (error, worker, queue, job) =>
     if job?
-      if job.class in ['hocr','pdf']
+      if job.class in ['convert','hocr','pdf','layer']
         @handlePageJobError job, error
       else
         jobId = job.args[0].jobId
