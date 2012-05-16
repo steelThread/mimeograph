@@ -1,4 +1,3 @@
-#
 # Dependencies
 #
 fs                       = require 'fs'
@@ -9,6 +8,7 @@ resque                   = require 'coffee-resque'
 async                    = require 'async'
 path                     = require 'path'
 pkginfo                  = require('pkginfo')(module)
+xml2js                   = require('xml2js')
 
 mimeograph         = exports
 mimeograph.version = module.exports.version
@@ -18,6 +18,8 @@ mimeograph.version = module.exports.version
 # plays nicely with. i have submitted a ticket with pdfbeads about
 # this and will remove when it is fixed.
 mimeograph.imageExtension = 'png'
+#while 72dpi is sufficient for most displays 240dpi improves ocr results
+mimeograph.imageDensity   = 240
 
 #
 # export to global scope.  not ideal.
@@ -66,16 +68,21 @@ class Job
     commandInfo = "#{command} #{JSON.stringify settings}"
     proc = spawn command, settings.args, settings.options
 
-    proc.stderr.on 'data', (data) ->
+    proc.stderr.on 'data', (data) =>
       @errorData = [] unless @errorData?
       @errorData.push data
 
-    proc.on 'exit', (code) ->
+    # proc.stdout.on 'data', (data) =>
+    #   @outData = [] unless @outData?
+    #   @outData.push data
+
+    proc.on 'exit', (code) =>
+      # log.debug "#{data}" for data in @outData if @outData?
       # handle error - have to check code & errorData because pdfbeads output
       # what appears to be non-error info to stderr.
       if code
         log.err "failure running #{commandInfo}"
-        log.err "#{error}" for error in @errorData if @errorData
+        log.err "#{error}" for error in @errorData if @errorData?
       #pass control back to original callback
       callback code
 
@@ -157,9 +164,8 @@ class Converter extends Job
     super @context, @callback
     @image = "#{_.basename @key}.#{mimeograph.imageExtension}"
     @args = [
-      '-SDEVICE=jpeg'
-      '-sPAPERSIZE=letter'
-      '-r240x240'
+      '-sDEVICE=jpeg'
+      "-r#{mimeograph.imageDensity}x#{mimeograph.imageDensity}"
       "-sOutputFile=#{@image}"
       '-dTextAlphaBits=4'
       '-dBATCH'
@@ -239,42 +245,74 @@ class PageGenerator extends Job
   constructor: (@context, @callback) ->
     super @context, @callback
     @basename = _.basename @key
-    @image = "#{@basename}.#{mimeograph.imageExtension}"
-    @hocrPath = "#{@basename}.hocr"
+    @image    = "#{@basename}.#{mimeograph.imageExtension}"
+    @hocr     = "#{@basename}.hocr"
     # this will ensure that we don't overwrite the original pdf
     # page in redis
-    @page = "#{@basename}.spdf"
+    @page     = "#{@basename}.spdf"
 
   perform: ->
     log "generating - #{@page}"
-    async.parallel [@fetchHocr, @copyImage], @generate
+    async.waterfall [@fetchHocr, @readHocr, @parseHocr, @createImage, @renameImage],
+      @generate
 
   fetchHocr: (callback) =>
-    redis2file @key, file: @hocrPath, encoding: 'utf8', (err) =>
-      callback err
+    redis2file @key, file: @hocr, encoding: 'utf8', (err) =>
+      return callback err if err?
+      callback null
 
-  copyImage: (callback) =>
-    # TODO explore ways to dynamically generate image
-    # to better fit various dimensions etc.  however, this
-    # will most likely need a rethink of ghostscript's use
-    # of '-sPAPERSIZE=letter'.  we could use Imagemagick convert
-    # to create the image and then "cache it".  parsing the hocr
-    # file will reveal the bbox dimensions of the "ocr_page"
-    copyFile "#{__dirname}/blank.jpg", @image, (err) ->
-      callback err
+  # read the hOCR file
+  readHocr: (callback) =>
+    fs.readFile @hocr, (err, data) =>
+      return callback err if err?
+      callback null, data
+
+  # parse the hOCR file & extract the size of the page
+  parseHocr: (data, callback) =>
+    parser = new xml2js.Parser()
+    parser.parseString data, (err, json) =>
+      return callback err if err?
+      ocrPage = json.body.div
+      return callback "invalid hocr" unless ocrPage['@'].class is 'ocr_page'
+      match = /bbox((\s+\d+){4})/.exec(ocrPage['@'].title)
+      coordinates = match[1].trim().split(/\s/)
+      callback null, {width: coordinates[2], height: coordinates[3]}
+
+  # create the blank canvas for this page
+  createImage: (config, callback) =>
+    tempImage = "#{@basename}.jpg"
+    {width, height} = config
+    args = [
+      "-size"
+      "#{width}x#{height}"
+      "canvas:white"
+      "-density"
+      "#{mimeograph.imageDensity}"
+      tempImage
+    ]
+    proc = @spawn "convert", args:args, (code) =>
+      return callback "convert exit(#{code})" if code
+      callback null, tempImage
+
+  # pdf beads doesn't read in files with the jpg extension
+  # so rename this file to png
+  renameImage: (image, callback) =>
+    fs.rename image, @image, (err) ->
+      return callback err if err?
+      fs.unlink image
+      callback null
 
   generate: (err) =>
-    return @fail "#{err}" if err?
-    generator_path = path.join(__dirname, "mimeo_pdfbeads.rb")
-    #72dpi is sufficient for most displays and 240dpi is sufficient for printing
-    args = [generator_path, path.basename(@image),  "-o", "#{@page}", "-B", "240", "-d"]
+    return @fail err if err?
+    generator_path = path.join __dirname, "mimeo_pdfbeads.rb"
+    args = [generator_path, path.basename(@image),  "-o", "#{@page}", "-B", mimeograph.imageDensity, "-d"]
     # execute the mimeo_pdfbeads.rb script via ruby cli. this avoids the need to:
     # -include mimeo_pdfbeads as a executable in this package, which would
     #expose this ugliness to the user
     # -having to ensure that mimeo_pdfbeads has executable permission
     proc = @spawn "ruby", args: args, options: {cwd: path.dirname(@image)}, (code) =>
       return @fail "pdfbeads exit(#{code})" if code
-      fs.unlink file for file in [@image, @hocrPath]
+      fs.unlink file for file in [@image, @hocr]
       # not returning contents of @page - just the file path
       @complete page: @page
 

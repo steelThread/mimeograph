@@ -23,7 +23,8 @@
     "coffee-resque" : ">= 0.1.4",
     "redisfs"       : ">= 1.0.0",
     "async"         : ">= 0.1.15",
-    "pkginfo"       : ">= 0.2.3"
+    "pkginfo"       : ">= 0.2.3",
+    "xml2js"        : "0.1.14"
   },
   "devDependencies": {
     "vows"          : ">= 0.6.1",
