@@ -15,7 +15,6 @@ separate coffee-resque job allowing for interesting scaling options.
 - redis
 - poppler-utils (pdftotext)
 - tesseract v3.01
-- Ghostscript
 - ImageMagick
 - pdftk
 - ruby (1.8 w/ RubyGems or 1.9)
@@ -46,7 +45,7 @@ Mimeograph is currently tested with Node v0.4.8.
 This assumes that you have Homebrew installed and are using it for pacakge management on OS X.  If you aren't already using it download it [here](http://mxcl.github.com/homebrew/).  If you are already using Macport, Fink or *nix use these instructions as a guide.
 
 1. run "brew update"
-1. run "brew install poppler ghostscript imagemagick redis tesseract"
+1. run "brew install poppler imagemagick redis tesseract"
 1. install ruby.  either via
 	1. brew: "brew install ruby"
 	1. [rvm](http://beginrescueend.com/)
@@ -80,7 +79,7 @@ mimeograph module and related executables in a globally available path, such as
 	      --port         Redis port. (Default: Redis' default)
 	      --host         Redis host. (Default: Redis' default)
 
-	v1.0.0
+	v1.2.0
 
 
 	eg.  mimeograph -p test/test.pdf
