@@ -162,32 +162,40 @@ class Splitter  extends Job
 class Converter extends Job
   constructor: (@context, @callback) ->
     super @context, @callback
-    @image = "#{_.basename @key}.#{mimeograph.imageExtension}"
+    @basename = _.basename @key
+    @tempImage = "#{@basename}.jpg"
+    @image = "#{@basename}.#{mimeograph.imageExtension}"
     @args = [
-      '-sDEVICE=jpeg'
-      "-r#{mimeograph.imageDensity}x#{mimeograph.imageDensity}"
-      "-sOutputFile=#{@image}"
-      '-dTextAlphaBits=4'
-      '-dBATCH'
-      '-dNOPAUSE'
-      '-dSAFER'
-      '--'
+      "-density"
+      "#{mimeograph.imageDensity}"
       @key
+      @tempImage
     ]
 
   perform: ->
     log "converting   - #{@key}"
+    async.waterfall [@fetchPdf, @convert, @rename], @fetchImage
+
+  fetchPdf: (callback) =>
     # do not delete - still need to merge hocr
     redis2file @key, file: @key, deleteKey: false, (err) =>
-      return @fail err if err?
-      @split()
+      return callback err if err?
+      callback null
 
-  split: ->
-    proc = @spawn 'gs', args: @args, (code) =>
-      return @fail "gs exit(#{code})" if code
-      @fetchPage()
+  convert: (callback) =>
+    proc = @spawn 'convert', args: @args, (code) =>
+      return callback  "convert exit(#{code})" if code
+      callback null
 
-  fetchPage: ->
+  # pdf beads doesn't read in files with the jpg extension
+  # so rename this file to png
+  rename: (callback) =>
+    fs.rename @tempImage, @image, (err) ->
+      return callback err if err?
+      callback null
+
+  fetchImage: (err)=>
+    return @fail err if err?
     path.exists @image, (exists) =>
       return @fail "@image file was not found" unless exists
       @complete image: @image
@@ -299,7 +307,6 @@ class PageGenerator extends Job
   renameImage: (image, callback) =>
     fs.rename image, @image, (err) ->
       return callback err if err?
-      fs.unlink image
       callback null
 
   generate: (err) =>
