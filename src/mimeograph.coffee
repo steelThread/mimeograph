@@ -150,7 +150,13 @@ class Splitter  extends Job
 
   findPages: (basename, file) ->
     basename = basename.substr basename.lastIndexOf('/') + 1
-    @pages.push "/tmp/#{file}" if file.match "^#{basename}-{1}"
+    # in rare cases there may be a file in the tmp dir
+    # that matches the basename with an extension other
+    # than pdf. this is normally the result of working files
+    # left over from an earlier unsuccessful attempt to
+    # process a pdf with an identical jobid
+    # we now are only pushing pages with a pdf extension
+    @pages.push "/tmp/#{file}" if file.match "#{basename}-\\d{4}\\.pdf"
 
 #
 # Convert a one page pdf into a single image using
@@ -466,6 +472,9 @@ class Mimeograph
   #
   createJob: (jobId, file) ->
     key = @filename jobId
+    # TODO delete the set if it exists
+    # this could occur if we are replaying a job that
+    # failed or "stalled" out
     redis.hset genkey(jobId), 'started', _.now()
     file2redis file, key: key, (err) =>
       return @capture err, {jobId: jobId} if err?
