@@ -472,6 +472,9 @@ class Mimeograph
   #
   createJob: (jobId, file) ->
     key = @filename jobId
+    # TODO delete the set if it exists
+    # this could occur if we are replaying a job that
+    # failed or "stalled" out
     redis.hset genkey(jobId), 'started', _.now()
     file2redis file, key: key, (err) =>
       return @capture err, {jobId: jobId} if err?
