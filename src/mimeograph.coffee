@@ -329,10 +329,6 @@ class PageGenerator extends Job
 
   generate: (err) =>
     return @fail err if err?
-<<<<<<< HEAD
-    generator_path = path.join __dirname, "mimeo_pdfbeads.rb"
-    args = [generator_path, path.basename(@image),  "-o", "#{@page}", "-B", IMAGE_DENSITY, "-d"]
-=======
     generator_path = path.join __dirname, "patched_pdfbeads.rb"
     args           = [
       generator_path
@@ -340,10 +336,9 @@ class PageGenerator extends Job
       "-o"
       "#{@page}"
       "-B"
-      mimeograph.imageDensity
+      IMAGE_DENSITY
       "-d"
     ]
->>>>>>> e80b346834896e01ba436d6d3fc71b2dd687b61a
     # execute the mimeo_pdfbeads.rb script via ruby cli. this avoids the need to:
     # -include mimeo_pdfbeads as a executable in this package, which would
     #expose this ugliness to the user
