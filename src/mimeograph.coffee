@@ -1,25 +1,29 @@
 # Dependencies
 #
-fs                       = require 'fs'
-resque                   = require 'coffee-resque'
-{spawn}                  = require 'child_process'
-{redisfs}                = require 'redisfs'
-{_, log, puts, copyFile} = require './utils'
-async                    = require 'async'
-path                     = require 'path'
-pkginfo                  = require('pkginfo')(module)
-xml2js                   = require('xml2js')
+fs                        = require 'fs'
+resque                    = require 'coffee-resque'
+{spawn}                   = require 'child_process'
+{redisfs}                 = require 'redisfs'
+{_, log, puts, copyFile}  = require './utils'
+async                     = require 'async'
+path                      = require 'path'
+pkginfo                   = require('pkginfo')(module)
+xml2js                    = require('xml2js')
 
 mimeograph                = exports
 mimeograph.version        = module.exports.version
+
+#
+# Constants
+#
 # although pdf beads works with a variety of image types
 # it will only process images with certain extension - regardless
 # of the actual image type.  this happens to be one that pdfbeads
 # plays nicely with. i have submitted a ticket with pdfbeads about
 # this and will remove when it is fixed.
-mimeograph.imageExtension = 'png'
+IMAGE_EXTENSION = 'png'
 #while 72dpi is sufficient for most displays 240dpi improves ocr results
-mimeograph.imageDensity   = 240
+IMAGE_DENSITY   = 240
 
 #
 # export to global scope.  not ideal.
@@ -64,9 +68,9 @@ class Job
   # "args" and options" keys are still optional.
   #
   spawn: (command, settings..., callback) ->
-    settings = settings[0] || {}
+    settings    = settings[0] || {}
     commandInfo = "#{command} #{JSON.stringify settings}"
-    proc = spawn command, settings.args, settings.options
+    proc        = spawn command, settings.args, settings.options
 
     proc.stderr.on 'data', (data) =>
       @errorData = [] unless @errorData?
@@ -125,7 +129,7 @@ class Splitter  extends Job
   constructor: (@context, @callback, @pages = []) ->
     super @context, @callback
     @basename = _.basename @key
-    @args = [
+    @args     = [
       @key
       "burst"
       "output"
@@ -170,12 +174,12 @@ class Splitter  extends Job
 class Converter extends Job
   constructor: (@context, @callback) ->
     super @context, @callback
-    @basename = _.basename @key
+    @basename  = _.basename @key
     @tempImage = "#{@basename}.jpg"
-    @image = "#{@basename}.#{mimeograph.imageExtension}"
-    @args = [
+    @image     = "#{@basename}.#{IMAGE_EXTENSION}"
+    @args      = [
       "-density"
-      "#{mimeograph.imageDensity}"
+      "#{IMAGE_DENSITY}"
       @key
       @tempImage
     ]
@@ -266,7 +270,7 @@ class PageGenerator extends Job
   constructor: (@context, @callback) ->
     super @context, @callback
     @basename = _.basename @key
-    @image    = "#{@basename}.#{mimeograph.imageExtension}"
+    @image    = "#{@basename}.#{IMAGE_EXTENSION}"
     @hocr     = "#{@basename}.hocr"
     # this will ensure that we don't overwrite the original pdf
     # page in redis
@@ -309,7 +313,7 @@ class PageGenerator extends Job
       "#{width}x#{height}"
       "canvas:white"
       "-density"
-      "#{mimeograph.imageDensity}"
+      "#{IMAGE_DENSITY}"
       tempImage
     ]
     proc = @spawn "convert", args:args, (code) =>
@@ -325,6 +329,10 @@ class PageGenerator extends Job
 
   generate: (err) =>
     return @fail err if err?
+<<<<<<< HEAD
+    generator_path = path.join __dirname, "mimeo_pdfbeads.rb"
+    args = [generator_path, path.basename(@image),  "-o", "#{@page}", "-B", IMAGE_DENSITY, "-d"]
+=======
     generator_path = path.join __dirname, "patched_pdfbeads.rb"
     args           = [
       generator_path
@@ -335,6 +343,7 @@ class PageGenerator extends Job
       mimeograph.imageDensity
       "-d"
     ]
+>>>>>>> e80b346834896e01ba436d6d3fc71b2dd687b61a
     # execute the mimeo_pdfbeads.rb script via ruby cli. this avoids the need to:
     # -include mimeo_pdfbeads as a executable in this package, which would
     #expose this ugliness to the user
