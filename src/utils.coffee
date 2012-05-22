@@ -1,4 +1,5 @@
 require 'colors'
+fs             = require 'fs'
 _              = require 'underscore'
 puts           = console.log
 {log, inspect} = require 'util'
@@ -6,7 +7,7 @@ puts           = console.log
 exports.log       = (msg) -> log msg.green
 exports.log.warn  = (msg) -> log msg.yellow
 exports.log.err   = (msg) -> log msg.red
-exports.log.debug = (msg) -> log msg.blue
+exports.log.debug = (msg) -> log stringify(msg).blue
 
 exports.puts        = (obj) -> puts stringify obj
 exports.puts.green  = (obj) -> puts stringify(obj).green
@@ -15,6 +16,19 @@ exports.puts.stderr = (obj) -> process.stderr.write "#{stringify(obj)}\n"
 exports.puts.grey   = (obj) -> puts stringify(obj).grey
 
 stringify = (obj) -> if _.isString obj then obj else inspect obj
+
+exports.copyFile =  (sourceFile, targetFile, callback) ->
+  readStream = fs.createReadStream sourceFile
+  writeStream = fs.createWriteStream targetFile
+  readStream.on 'end', ->
+    callback null
+  # not sure if an error on the streams will cause this
+  # op to stop
+  readStream.on 'error', (err)->
+    callback err
+  writeStream.on 'error', (err)->
+    callback err
+  readStream.pipe writeStream
 
 #
 # _ expandos
@@ -32,16 +46,6 @@ exports._.lpad          = (val, length = 10, char = '0') ->
 # this will remove the page number and everything after it
 exports._.stripPageNumber = (file) ->
   file.substring 0, file.lastIndexOf('-')
-
-#
-# capture proc output - useful in debugging "spawn" or "exec" calls that are going awry
-#
-exports._.redirectOutput = (proc) ->
-  proc.stdout.on 'data', (data) ->
-    puts "stdout: #{data}"
-
-  proc.stderr.on 'data', (data) ->
-    puts "stderr: #{data}"
 
 #
 # catch all the junk
