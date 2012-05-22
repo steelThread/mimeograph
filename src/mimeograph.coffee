@@ -1,22 +1,29 @@
-#
 # Dependencies
 #
-fs             = require 'fs'
-resque         = require 'coffee-resque'
-{spawn}        = require 'child_process'
-{redisfs}      = require 'redisfs'
-{_, log, puts} = require './utils'
-async          = require 'async'
-path           = require 'path'
-pkginfo        = require('pkginfo')(module)
+fs                        = require 'fs'
+resque                    = require 'coffee-resque'
+{spawn}                   = require 'child_process'
+{redisfs}                 = require 'redisfs'
+{_, log, puts, copyFile}  = require './utils'
+async                     = require 'async'
+path                      = require 'path'
+pkginfo                   = require('pkginfo')(module)
+xml2js                    = require('xml2js')
 
-mimeograph         = exports
-mimeograph.version = module.exports.version
+mimeograph                = exports
+mimeograph.version        = module.exports.version
+
+#
+# Constants
+#
 # although pdf beads works with a variety of image types
 # it will only process images with certain extension - regardless
 # of the actual image type.  this happens to be one that pdfbeads
-# plays nicely with
-mimeograph.imageExtension = 'png'
+# plays nicely with. i have submitted a ticket with pdfbeads about
+# this and will remove when it is fixed.
+IMAGE_EXTENSION = 'png'
+#while 72dpi is sufficient for most displays 240dpi improves ocr results
+IMAGE_DENSITY   = 240
 
 #
 # export to global scope.  not ideal.
@@ -61,20 +68,27 @@ class Job
   # "args" and options" keys are still optional.
   #
   spawn: (command, settings..., callback) ->
-    settings = settings[0] || {}
+    settings    = settings[0] || {}
     commandInfo = "#{command} #{JSON.stringify settings}"
-    proc = spawn command, settings.args, settings.options
+    proc        = spawn command, settings.args, settings.options
 
-    proc.stderr.on 'data', (data) ->
+    proc.stderr.on 'data', (data) =>
       @errorData = [] unless @errorData?
       @errorData.push data
 
-    proc.on 'exit', (code) ->
+    # support capturing lots of debug output
+    if settings.debug?
+      proc.stdout.on 'data', (data) =>
+        @outData = [] unless @outData?
+        @outData.push data
+
+    proc.on 'exit', (code) =>
+      log.debug "#{data}" for data in @outData if @outData?
       # handle error - have to check code & errorData because pdfbeads output
       # what appears to be non-error info to stderr.
       if code
         log.err "failure running #{commandInfo}"
-        log.err "#{error}" for error in @errorData if @errorData
+        log.err "#{error}" for error in @errorData if @errorData?
       #pass control back to original callback
       callback code
 
@@ -104,8 +118,8 @@ class Extractor extends Job
       @complete text: text
 
 #
-# Split the pdf file into individual image files per
-# page using ghostscript.
+# Split the pdf file into individual pdf files with 1
+# page each using pdftk burst.
 #
 # callback will receive a hash with a 'pages' propery
 # containing and array of all the paths produced by
@@ -115,18 +129,11 @@ class Splitter  extends Job
   constructor: (@context, @callback, @pages = []) ->
     super @context, @callback
     @basename = _.basename @key
-    @args = [
-      #jpeg supports color
-      '-SDEVICE=jpeg'
-      '-r240x240'
-      '-sPAPERSIZE=letter'
-      "-sOutputFile=#{@basename}-%04d.#{mimeograph.imageExtension}"
-      '-dTextAlphaBits=4'
-      '-dBATCH'
-      '-dNOPAUSE'
-      '-dSAFER'
-      '--'
+    @args     = [
       @key
+      "burst"
+      "output"
+      "#{@basename}-%04d.pdf"
     ]
 
   perform: ->
@@ -136,8 +143,8 @@ class Splitter  extends Job
       @split()
 
   split: ->
-    proc = @spawn 'gs', args: @args, (code) =>
-      return @fail "gs exit(#{code})" if code
+    proc = @spawn 'pdftk', args: @args, (code) =>
+      return @fail "pdftk exit(#{code})" if code
       @fetchPages()
 
   fetchPages: ->
@@ -149,36 +156,95 @@ class Splitter  extends Job
 
   findPages: (basename, file) ->
     basename = basename.substr basename.lastIndexOf('/') + 1
-    @pages.push "/tmp/#{file}" if file.match "^#{basename}-{1}"
+    # in rare cases there may be a file in the tmp dir
+    # that matches the basename with an extension other
+    # than pdf. this is normally the result of working files
+    # left over from an earlier unsuccessful attempt to
+    # process a pdf with an identical jobid
+    # we now are only pushing pages with a pdf extension
+    @pages.push "/tmp/#{file}" if file.match "#{basename}-\\d{4}\\.pdf"
+
+#
+# Convert a one page pdf into a single image using
+# ImageMagick convert
+#
+# callback will receive the path to the image
+# created by convert.
+#
+class Converter extends Job
+  constructor: (@context, @callback) ->
+    super @context, @callback
+    @basename  = _.basename @key
+    @tempImage = "#{@basename}.jpg"
+    @image     = "#{@basename}.#{IMAGE_EXTENSION}"
+    @args      = [
+      "-density"
+      "#{IMAGE_DENSITY}"
+      @key
+      @tempImage
+    ]
+
+  perform: ->
+    log "converting   - #{@key}"
+    async.waterfall [@fetchPdf, @convert, @rename], @fetchImage
+
+  fetchPdf: (callback) =>
+    # do not delete - still need hocr to create searchable PDF
+    redis2file @key, file: @key, deleteKey: false, (err) =>
+      return callback err if err?
+      callback null
+
+  convert: (callback) =>
+    proc = @spawn 'convert', args: @args, (code) =>
+      return callback "convert exit(#{code})" if code
+      callback null
+
+  # pdf beads doesn't read in files with the jpg extension
+  # so rename this file to png
+  rename: (callback) =>
+    fs.rename @tempImage, @image, (err) ->
+      return callback err if err?
+      callback null
+
+  fetchImage: (err)=>
+    return @fail err if err?
+    path.exists @image, (exists) =>
+      return @fail "@image file was not found" unless exists
+      @complete image: @image
+      fs.unlink 'doc_data.txt' #metadata file created by pdftk burst
 
 #
 # Recognize (ocr) the text, in hocr format, from the images using
 # tesseract.
 #
-# callback will receive a hash with a 'hocr' field containing
-# the path to the hocr result.
+# callback will normally receive a hash with a 'hocr' field
+# containing the path to the hocr result. if this job has already
+# failed prior to performing the OCR operation, the Recognizer
+# will skip the OCR and call the callback without any wirguments.
 #
 class Recognizer extends Job
   constructor: (@context, @callback) ->
     super @context, @callback
-    basename  = _.basename @key
+    basename = _.basename @key
     #hocr generates file with html extension
-    @file      = "#{basename}.html"
-    @args = [
-      @key,
-      basename,
+    @file    = "#{basename}.html"
+    @args    = [
+      @key
+      basename
       "+#{__dirname}/tesseract_hocr_config.txt"
     ]
 
   perform: ->
     log "recognizing - #{@key}"
-    # need the image for page generation later
-    redis2file @key, file: @key, deleteKey: false, (err) =>
+    redis2file @key, file: @key, (err) =>
       return @fail err if err?
       @recognize()
 
   recognize: ->
     jobStatus @jobId, (status) =>
+      # TODO this slipped through the cracks.  Subsequent jobs
+      # need to be cognisant of this shortcircuit
+      # bypass OCR is the job has already failed
       if status isnt 'fail'
         proc = @spawn 'tesseract', args:@args, (code) =>
           return @fail "tesseract exit(#{code})" if code
@@ -196,44 +262,134 @@ class Recognizer extends Job
 #
 # Generate the searchable PDF for a single page using pdfbeads.
 #
-# callback will receive a hash with a 'spage' field containing
+# callback will receive a hash with a 'page' field containing
 # the path to the searchable pdf page and a 'pageNumber' field
-# containing the page number of the 'spage' in the ultimate pdf.
+# containing the page number of the 'page' in the ultimate pdf.
 #
 class PageGenerator extends Job
   constructor: (@context, @callback) ->
     super @context, @callback
     @basename = _.basename @key
-    @imgKey = "#{@basename}.#{mimeograph.imageExtension}"
-    @hocrPath = "#{@basename}.hocr"
-    @page = "#{@basename}.pdf"
+    @image    = "#{@basename}.#{IMAGE_EXTENSION}"
+    @hocr     = "#{@basename}.hocr"
+    # this will ensure that we don't overwrite the original pdf
+    # page in redis
+    @page     = "#{@basename}.spdf"
 
   perform: ->
     log "generating - #{@page}"
-    async.parallel [@fetchHocr, @fetchImage], @generate
+    async.waterfall [@fetchHocr, @readHocr, @parseHocr, @createImage, @renameImage],
+      @generate
 
   fetchHocr: (callback) =>
-    redis2file @key, file: @hocrPath, encoding: 'utf8', (err) =>
-      callback err
+    redis2file @key, file: @hocr, encoding: 'utf8', (err) =>
+      return callback err if err?
+      callback null
 
-  fetchImage: (callback) =>
-    redis2file @imgKey, file: @imgKey, (err) =>
-      callback err
+  # read the hOCR file
+  readHocr: (callback) =>
+    fs.readFile @hocr, (err, data) =>
+      return callback err if err?
+      callback null, data
+
+  # parse the hOCR file & extract the size of the page
+  parseHocr: (data, callback) =>
+    parser = new xml2js.Parser()
+    parser.parseString data, (err, json) =>
+      return callback err if err?
+      ocrPage = json.body.div
+      return callback "invalid hocr" unless ocrPage['@'].class is 'ocr_page'
+      match = /bbox((\s+\d+){4})/.exec(ocrPage['@'].title)
+      coordinates = match[1].trim().split(/\s/)
+      callback null, {width: coordinates[2], height: coordinates[3]}
+
+  # create the blank canvas for this page
+  # TODO update mimeo so that it can reuse existing images that match dimensions
+  createImage: (config, callback) =>
+    tempImage       = "#{@basename}.jpg"
+    {width, height} = config
+    args            = [
+      "-size"
+      "#{width}x#{height}"
+      "canvas:white"
+      "-density"
+      "#{IMAGE_DENSITY}"
+      tempImage
+    ]
+    proc = @spawn "convert", args:args, (code) =>
+      return callback "convert exit(#{code})" if code
+      callback null, tempImage
+
+  # pdf beads doesn't read in files with the jpg extension
+  # so rename this file to png
+  renameImage: (image, callback) =>
+    fs.rename image, @image, (err) ->
+      return callback err if err?
+      callback null
 
   generate: (err) =>
-    return @fail "#{err}" if err?
-    generator_path = path.join(__dirname, "mimeo_pdfbeads.rb")
-    #72dpi is sufficient for most displays and 240dpi is sufficient for printing
-    args = [generator_path, path.basename(@imgKey),  "-o", "#{@page}", "-B", "240", "-d"]
+    return @fail err if err?
+    generator_path = path.join __dirname, "patched_pdfbeads.rb"
+    args           = [
+      generator_path
+      path.basename @image
+      "-o"
+      "#{@page}"
+      "-B"
+      IMAGE_DENSITY
+      "-d"
+    ]
     # execute the mimeo_pdfbeads.rb script via ruby cli. this avoids the need to:
     # -include mimeo_pdfbeads as a executable in this package, which would
     #expose this ugliness to the user
     # -having to ensure that mimeo_pdfbeads has executable permission
-    proc = @spawn "ruby", args:args, options: {cwd: path.dirname(@imgKey)}, (code) =>
+    proc = @spawn "ruby", args: args, options: {cwd: path.dirname(@image)}, (code) =>
       return @fail "pdfbeads exit(#{code})" if code
-      fs.unlink file for file in [@imgKey, @hocrPath]
+      fs.unlink file for file in [@image, @hocr]
       # not returning contents of @page - just the file path
-      @complete spage: @page, pageNumber: _.pageNumber @page
+      @complete page: @page
+
+#
+# Layer the original PDF on top of the searchable PDF
+# using pdftk.  this will generate a searchable PDF that
+# appears visually indistinguisable from the original page.
+#
+# callback will receive a hash with a 'page' field containing
+# the path to the new layered searchable pdf page and
+# a 'pageNumber' field containing the page number of the
+# 'page' in the final pdf.
+#
+class PdfLayer extends Job
+  constructor: (@context, @callback) ->
+    super @context, @callback
+    # derive backgroundPage and foregroundPage from key
+    @backgroundPage = @key
+    @foregroundPage = "#{_.basename @key}.pdf"
+    # output file name needs to be different from source files
+    @layeredPage    = "#{_.basename @key}.lpdf"
+    @args           = [
+      @foregroundPage
+      "background"
+      @backgroundPage
+      "output"
+      @layeredPage
+    ]
+
+  perform: ->
+    log "layering  - #{@key}"
+    async.forEach [@backgroundPage, @foregroundPage], @fetchFile, @layer
+
+  fetchFile: (key, callback) ->
+    redis2file key, file: key, (err) =>
+      log.err "error accessing #{key}" if err?
+      callback err
+
+  layer: (err) =>
+    return @fail err if err?
+    proc = @spawn "pdftk", args: @args, (code) =>
+      return @fail "pdftk exit(#{code})" if code
+      fs.unlink file for file in [@backgroundPage, @foregroundPage]
+      @complete page: @layeredPage, pageNumber: _.pageNumber @layeredPage
 
 #
 # Generate the searchable PDF by combining all of the individual
@@ -250,7 +406,7 @@ class PdfStitcher extends Job
     @args = ["output", @page]
 
   perform: ->
-    log "stitching - #{@jobId}:#{@keys}"
+    log "stitching - #{@jobId} #{@keys}"
     async.map @keys, @fetchPage, (err, results) =>
       return @fail err if err?
       @stitch results
@@ -273,8 +429,10 @@ class PdfStitcher extends Job
 jobs =
   extract       : (context, callback) -> new Extractor(context, callback).perform()
   split         : (context, callback) -> new Splitter(context, callback).perform()
+  convert       : (context, callback) -> new Converter(context, callback).perform()
   hocr          : (context, callback) -> new Recognizer(context, callback).perform()
   pdf           : (context, callback) -> new PageGenerator(context, callback).perform()
+  layer         : (context, callback) -> new PdfLayer(context, callback).perform()
   stitch        : (context, callback) -> new PdfStitcher(context, callback).perform()
   lastextract   : (context, callback) -> new Extractor(context, callback).perform()
 
@@ -334,6 +492,9 @@ class Mimeograph
   #
   createJob: (jobId, file) ->
     key = @filename jobId
+    # TODO delete the set if it exists
+    # this could occur if we are replaying a job that
+    # failed or stalled out
     redis.hset genkey(jobId), 'started', _.now()
     file2redis file, key: key, (err) =>
       return @capture err, {jobId: jobId} if err?
@@ -354,9 +515,11 @@ class Mimeograph
   success: (worker, queue, job, result) =>
     switch job.class
       when 'extract'     then @split result
-      when 'split'       then @hocr result
+      when 'split'       then @convert result
+      when 'convert'     then @hocr result
       when 'hocr'        then @pdf result
-      when 'pdf'         then @stitch result
+      when 'pdf'         then @layer result
+      when 'layer'       then @stitch result
       when 'stitch'      then @complete result
       when 'lastextract' then @recordText result
 
@@ -385,13 +548,20 @@ class Mimeograph
   #
   # Set the number of pages that came out of the
   # split step.  For each split file store the
-  # the file in redis and schedule an hocr job.
+  # the file in redis and schedule an convert job.
   #
-  hocr: (result) ->
+  convert: (result) ->
     {jobId, pages} = result
     redis.hset genkey(jobId), 'num_pages', pages.length, (err) =>
       return @capture err, result if err?
-      @storeAndEnqueue page, 'hocr', jobId for page in pages
+      @storeAndEnqueue page, 'convert', jobId for page in pages
+
+  #
+  # Store the image and in redis and schedule an hocr job.
+  #
+  hocr: (result) ->
+    {jobId, image} = result
+    @storeAndEnqueue image, 'hocr', jobId
 
   #
   # Store the hocr result in redis and schedule a pdf
@@ -402,17 +572,25 @@ class Mimeograph
     @storeAndEnqueue hocr, 'utf8', 'pdf', jobId
 
   #
-  # Store the searchable page in a redis hash and determine
+  # Store the searchable page in a redis hash and schedule
+  # a layer job that pdf with the original pdf page
+  #
+  layer: (result) ->
+    {jobId, page} = result
+    @storeAndEnqueue page, 'layer', jobId
+
+  #
+  # Store the final page in a redis hash and determine
   # if all the pages have been recognized at which point
   # finish.
   #
   stitch: (result) ->
-    {jobId, pageNumber, spage} = result
+    {jobId, pageNumber, page} = result
     # add the searchable page to a key
-    file2redis spage, key: spage, (err) =>
-      return @capture err, {jobId: jobId, spage: spage, desc: 'error in Mimeograph.stitch() writing page'} if err?
+    file2redis page, key: page, (err) =>
+      return @capture err, {jobId: jobId, page: page, desc: 'error in Mimeograph.stitch() writing page'} if err?
       # file is written - write the rest to redis
-      @recordPageComplete jobId, _.stripPageNumber(spage)
+      @recordPageComplete jobId, _.stripPageNumber(page)
 
   #
   # Record the completion of a page and then determine if
@@ -442,16 +620,16 @@ class Mimeograph
         return @capture err, results if err?
         return @fatalError jobId, "Recorded failure for every page" if total is parseInt(results)
         # stitch the pages together
-        @gatherSPages jobId, baseKey, (results) =>
+        @gatherPages jobId, baseKey, (results) =>
           @enqueue 'stitch', results.sort(), jobId
 
   #
-  # Collect the keys for searchable pages generated for this
+  # Collect the keys for final pages generated for this
   # jobId.  The callback will be passed a single argument, an
   # array of keys.
   #
-  gatherSPages: (jobId, baseKey, callback) ->
-    pdfFile = /.*\.pdf$/
+  gatherPages: (jobId, baseKey, callback) ->
+    pdfFile = /.*\.lpdf$/
     redis.keys "#{baseKey}*", (err, results) =>
       return @capture err, {jobId: jobId} if err?
       callback (result for result in results when pdfFile.test(result))
@@ -462,12 +640,10 @@ class Mimeograph
   #
   complete: (result) ->
     {jobId, page} = result
-    # TODO need to push a change to redisfs to have more flexibility
-    # in the datastructure you want to store files in
     fs.readFile page, "base64", (err, data) =>
       key   = genkey jobId
       field = "outputpdf"
-      # TODO only store the doc once - this is a little ugly
+      # TODO refactor so that we only store the doc once
       # store the doc in the hset then in the key for the extract job
       redis.hset key, field, data, (err, results) =>
         return @capture err, {jobId: jobId, desc: "error in complete"} if err?
@@ -539,8 +715,8 @@ class Mimeograph
   #
   error: (error, worker, queue, job) =>
     if job?
-      if job.class in ['hocr','pdf']
-        @handlePageJobError job
+      if job.class in ['convert','hocr','pdf','layer']
+        @handlePageJobError job, error
       else
         jobId = job.args[0].jobId
         log.err "error       - #{jobId} #{job.class} #{error}"
@@ -560,11 +736,11 @@ class Mimeograph
   # TODO: if a one page doc fails during pagegeneration i don't believe
   # that mimeo will publish the failure.
   #
-  handlePageJobError: (job) =>
-    jobId = job.args[0].jobId
+  handlePageJobError: (job, error) =>
+    jobId      = job.args[0].jobId
     pageNumber = _.pageNumber(job.args[0].key)
-    log.err "error       - #{jobId} #{job.class} page: #{pageNumber}"
-    errorsKey = genkey jobId, 'error_pages'
+    log.err "error       - #{jobId} #{job.class} #{error} page: #{pageNumber}"
+    errorsKey  = genkey jobId, 'error_pages'
     redis.zadd errorsKey, pageNumber, pageNumber, (err) =>
       return @capture err if err?
       @recordPageComplete jobId, _.stripPageNumber(job.args[0].key)
@@ -619,8 +795,6 @@ class Mimeograph
 
   #
   # Log the err.
-  #
-  # todo: add the jobId here and error notification.
   #
   capture: (err, meta) -> log.err "#{JSON.stringify meta} #{JSON.stringify err}"
 
