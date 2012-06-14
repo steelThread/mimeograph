@@ -86,7 +86,8 @@ class Job
       log.debug "#{data}" for data in @outData if @outData?
       # handle error - have to check code & errorData because pdfbeads output
       # what appears to be non-error info to stderr.
-      if code
+      # code can be null if process exits abnormally
+      unless code == 0
         log.err "failure running #{commandInfo}"
         log.err "#{error}" for error in @errorData if @errorData?
       #pass control back to original callback
@@ -106,7 +107,7 @@ class Extractor extends Job
       @extract()
 
   extract: ->
-    proc = @spawn 'pdftotext', args:[@key], (code) =>
+    @spawn 'pdftotext', args:[@key], (code) =>
       return @fail "pdftotext exit(#{code})" if code
       @fetchText()
 
@@ -143,7 +144,7 @@ class Splitter  extends Job
       @split()
 
   split: ->
-    proc = @spawn 'pdftk', args: @args, (code) =>
+    @spawn 'pdftk', args: @args, (code) =>
       return @fail "pdftk exit(#{code})" if code
       @fetchPages()
 
@@ -195,7 +196,7 @@ class Converter extends Job
       callback null
 
   convert: (callback) =>
-    proc = @spawn 'convert', args: @args, (code) =>
+    @spawn 'convert', args: @args, (code) =>
       return callback "convert exit(#{code})" if code
       callback null
 
@@ -246,7 +247,7 @@ class Recognizer extends Job
       # need to be cognisant of this shortcircuit
       # bypass OCR is the job has already failed
       if status isnt 'fail'
-        proc = @spawn 'tesseract', args:@args, (code) =>
+        @spawn 'tesseract', args:@args, (code) =>
           return @fail "tesseract exit(#{code})" if code
           @fetchText()
       else
@@ -254,8 +255,8 @@ class Recognizer extends Job
         @complete()
 
   fetchText: ->
-    fs.readFile @file, 'utf8', (err, text) =>
-      return @fail err if err?
+    path.exists @file, (exists) =>
+      return @fail "Tesseract failed to create file #{@file}" unless exists
       fs.unlink @key
       @complete hocr: @file
 
@@ -316,7 +317,7 @@ class PageGenerator extends Job
       "#{IMAGE_DENSITY}"
       tempImage
     ]
-    proc = @spawn "convert", args:args, (code) =>
+    @spawn "convert", args:args, (code) =>
       return callback "convert exit(#{code})" if code
       callback null, tempImage
 
@@ -343,11 +344,13 @@ class PageGenerator extends Job
     # -include mimeo_pdfbeads as a executable in this package, which would
     #expose this ugliness to the user
     # -having to ensure that mimeo_pdfbeads has executable permission
-    proc = @spawn "ruby", args: args, options: {cwd: path.dirname(@image)}, (code) =>
+    @spawn "ruby", args: args, options: {cwd: path.dirname(@image)}, (code) =>
       return @fail "pdfbeads exit(#{code})" if code
-      fs.unlink file for file in [@image, @hocr]
-      # not returning contents of @page - just the file path
-      @complete page: @page
+      path.exists @page, (exists) =>
+        return @fail "pdfbeads failed to create searchable PDF page #{@path}" unless exists
+        # not returning contents of @page - just the file path
+        fs.unlink file for file in [@image, @hocr]
+        @complete page: @page
 
 #
 # Layer the original PDF on top of the searchable PDF
@@ -386,10 +389,12 @@ class PdfLayer extends Job
 
   layer: (err) =>
     return @fail err if err?
-    proc = @spawn "pdftk", args: @args, (code) =>
+    @spawn "pdftk", args: @args, (code) =>
       return @fail "pdftk exit(#{code})" if code
-      fs.unlink file for file in [@backgroundPage, @foregroundPage]
-      @complete page: @layeredPage, pageNumber: _.pageNumber @layeredPage
+      path.exists @layeredPage, (exists) =>
+        return @fail "pdftk failed to create layered PDF #{@path}" unless exists
+        fs.unlink file for file in [@backgroundPage, @foregroundPage]
+        @complete page: @layeredPage, pageNumber: _.pageNumber @layeredPage
 
 #
 # Generate the searchable PDF by combining all of the individual
@@ -412,10 +417,12 @@ class PdfStitcher extends Job
       @stitch results
 
   stitch: (pages) ->
-    proc = @spawn 'pdftk', args: pages.concat(@args), options: {cwd: path.dirname(@page)}, (code) =>
+    @spawn 'pdftk', args: pages.concat(@args), options: {cwd: path.dirname(@page)}, (code) =>
       return @fail "pdftk exit(#{code})" if code
-      @cleanup pages
-      @complete page: @page
+      path.exists @page, (exists) =>
+        return @fail "pdftk failed to create merged PDF #{@path}" unless exists
+        @cleanup pages
+        @complete page: @page
 
   fetchPage: (pageKey, callback) ->
     redis2file pageKey, file: pageKey, callback
@@ -492,10 +499,12 @@ class Mimeograph
   #
   createJob: (jobId, file) ->
     key = @filename jobId
-    # TODO delete the set if it exists
+    rkey = genkey jobId
+    # delete the set if it already exists
     # this could occur if we are replaying a job that
     # failed or stalled out
-    redis.hset genkey(jobId), 'started', _.now()
+    redis.del rkey
+    redis.hset rkey, 'started', _.now()
     file2redis file, key: key, (err) =>
       return @capture err, {jobId: jobId} if err?
       @enqueue 'extract', key, jobId
@@ -704,6 +713,10 @@ class Mimeograph
     options = key: file
     options.encoding = encoding.shift() unless _.isEmpty encoding
     file2redis file, options, (err) =>
+      # TODO a failure here will cause the next job to not be
+      # issued.  This will likely result in "zombie" jobs
+      # that never complete.  This will occur anytime
+      # a @capture is called
       return @capture err, {jobId: jobId, job: job} if err?
       @enqueue job, file, jobId
 

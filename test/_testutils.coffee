@@ -24,6 +24,7 @@ switches = [
   ['-v', '--version', "Shows version."]
   ['-l', '--listen', 'Listen for mimegraph job completion messages.']
   ['-p', '--process [file]', 'Kicks of the processing of a new file.']
+  ['-i', '--processId [id]', 'Explicit id used for processing a file.']
   ['-c', '--cleanup', 'Delete all keys from redis']
   ['-r', '--redis [hostcolonport]', 'host:port for redis. can be specified as:
  <host>:<port>, <host> or :<port>. In left unspecified the default host and port
@@ -108,9 +109,8 @@ class Listener
     @client.quit()
 
 class KickStart
-  @kickStart: (sourceFile, redisConfig) ->
+  @kickStart: (sourceFile, redisConfig, jobId = new Date().getTime()) ->
     log "file to process: #{sourceFile}"
-    jobId = new Date().getTime()
     tmpTargetFile = "/tmp/#{jobId}"
 
     stats = fs.lstatSync sourceFile
@@ -162,4 +162,4 @@ testutils.run = ->
     CleanupRedis.cleanup(new RedisConfig(options.redis))
 
   if options.process
-    KickStart.kickStart options.process, new RedisConfig(options.redis)
+    KickStart.kickStart options.process, new RedisConfig(options.redis), options.processId
