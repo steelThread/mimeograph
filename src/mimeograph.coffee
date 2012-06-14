@@ -348,7 +348,7 @@ class PageGenerator extends Job
       return @fail "pdfbeads exit(#{code})" if code
       # I believe there are cases when the process returns a
       # code of zero but failed to created the searchable page
-      path.exists @path, (exists) =>
+      path.exists @page, (exists) =>
         return @fail "pdfbeads failed to create searchable PDF page #{@path}" unless exists
         # not returning contents of @page - just the file path
         fs.unlink file for file in [@image, @hocr]
@@ -501,10 +501,12 @@ class Mimeograph
   #
   createJob: (jobId, file) ->
     key = @filename jobId
-    # TODO delete the set if it exists
+    rkey = genkey jobId
+    # delete the set if it already exists
     # this could occur if we are replaying a job that
     # failed or stalled out
-    redis.hset genkey(jobId), 'started', _.now()
+    redis.del rkey
+    redis.hset rkey, 'started', _.now()
     file2redis file, key: key, (err) =>
       return @capture err, {jobId: jobId} if err?
       @enqueue 'extract', key, jobId
@@ -522,9 +524,6 @@ class Mimeograph
   # Orchestrates the job steps.
   #
   success: (worker, queue, job, result) =>
-    log.debug "success called"
-    log.debug job
-    log.debug result
     switch job.class
       when 'extract'     then @split result
       when 'split'       then @convert result
