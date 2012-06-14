@@ -346,8 +346,6 @@ class PageGenerator extends Job
     # -having to ensure that mimeo_pdfbeads has executable permission
     @spawn "ruby", args: args, options: {cwd: path.dirname(@image)}, (code) =>
       return @fail "pdfbeads exit(#{code})" if code
-      # I believe there are cases when the process returns a
-      # code of zero but failed to created the searchable page
       path.exists @page, (exists) =>
         return @fail "pdfbeads failed to create searchable PDF page #{@path}" unless exists
         # not returning contents of @page - just the file path
