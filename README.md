@@ -79,7 +79,7 @@ mimeograph module and related executables in a globally available path, such as
 	      --port         Redis port. (Default: Redis' default)
 	      --host         Redis host. (Default: Redis' default)
 
-	v1.3.0
+	v1.3.1
 
 
 	eg.  mimeograph -p test/test.pdf
